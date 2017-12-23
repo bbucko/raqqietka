@@ -8,11 +8,10 @@ use std::result;
 extern crate log;
 extern crate simple_logger;
 
+static THRESHOLD: u32 = 128 * 128 * 128;
+
 type Result<T> = result::Result<T, &'static str>;
 type MQTTPayload = Vec<u8>;
-
-const THRESHOLD: i32 = 128 * 128 * 128;
-
 
 trait MQTTSupport {
     fn take_string(&mut self) -> std::string::String;
@@ -119,21 +118,21 @@ fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
 }
 
 fn take_variable_length(stream: &mut Read) -> usize {
-    let mut multiplier = 1;
-    let mut value: u8 = 0;
+    let mut multiplier: u32 = 1;
+    let mut value: u32 = 0;
     let mut encoded_byte = [0];
 
     loop {
         let _ = stream.read_exact(&mut encoded_byte);
-        value += (encoded_byte[0] & 127) * multiplier;
+        value += (encoded_byte[0] & 127) as u32 * multiplier;
         multiplier *= 128;
-
-        if multiplier as i32 > THRESHOLD {
-            panic!("variable length multiplier exceeds threshold");
-        }
 
         if encoded_byte[0] & 128 == 0 {
             break;
+        }
+
+        if multiplier > THRESHOLD {
+            panic!("malformed remaining length {:?}", multiplier);
         }
     }
     info!("length: {:?}", value);
@@ -192,5 +191,21 @@ fn test_length() {
 
 #[test]
 fn test_take_variable_length() {
-//    assert_eq!(MQTTPayload::from(vec![0b00000000, 0b00000000]).take_variable_length(), 0);
+    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0b00000000])), 0);
+    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x7F])), 127);
+
+    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x01])), 128);
+    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0x7F])), 16_383);
+
+    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x80, 0x01])), 16_384);
+    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0x7F])), 2_097_151);
+
+    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x80, 0x80, 0x01])), 2_097_152);
+    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x7F])), 268_435_455);
+}
+
+#[test]
+#[should_panic]
+fn test_take_variable_length_malformed() {
+    take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x8F]));
 }
