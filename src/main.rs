@@ -4,10 +4,46 @@ use std::thread;
 use std::sync::{Mutex, Arc};
 use std::result;
 
+#[macro_use]
+extern crate log;
+extern crate simple_logger;
+
 type Result<T> = result::Result<T, &'static str>;
 
+type MQTTPayload = Vec<u8>;
+
+trait MQTTSupport {
+    fn take_string(&mut self) -> std::string::String;
+    fn take_length(&mut self) -> usize;
+    fn take_one_byte(&mut self) -> u8;
+    fn take_two_bytes(&mut self) -> u16;
+}
+
+impl MQTTSupport for MQTTPayload {
+    fn take_string(&mut self) -> std::string::String {
+        let length = self.take_length();
+        let proto_name: Vec<u8> = self.drain(0..length).collect();
+        String::from_utf8(proto_name).expect("Error unwrapping string")
+    }
+
+    fn take_length(&mut self) -> usize {
+        let length: Vec<u8> = self.drain(0..2).collect();
+        ((length[0] as usize) << 8) | (length[1] as usize)
+    }
+
+    fn take_one_byte(&mut self) -> u8 {
+        let take_flags: Vec<u8> = self.drain(0..1).collect();
+        take_flags[0]
+    }
+
+    fn take_two_bytes(&mut self) -> u16 {
+        let keep_alive: Vec<u8> = self.drain(0..2).collect();
+        ((keep_alive[0] as u16) << 8) | (keep_alive[1] as u16)
+    }
+}
+
 fn handle_client(stream: &mut net::TcpStream) {
-    println!("new client: {:?}", stream);
+    info!("new client: {:?}", stream);
 
     loop {
         let mut fixed_header = [0];
@@ -16,17 +52,16 @@ fn handle_client(stream: &mut net::TcpStream) {
         let packet_type = fixed_header[0] >> 4;
         let flags = fixed_header[0] & 0b00001111;
 
-        println!(
+        info!(
             "header: {:08b} packet_type: {:08b} flags: {:08b}",
             fixed_header[0],
             packet_type,
             flags
         );
 
-        let remaining_length = variable_length(stream);
-        println!("remaining_length {:?}", remaining_length);
+        let remaining_length = take_variable_length(stream);
 
-        let mut payload: Vec<u8> = vec![0; remaining_length as usize];
+        let mut payload = MQTTPayload::with_capacity(remaining_length);
         let _ = stream.read_exact(&mut payload);
 
         let response = match packet_type {
@@ -46,35 +81,43 @@ fn handle_client(stream: &mut net::TcpStream) {
     }
 }
 
-fn handle_connect(payload: &mut Vec<u8>) -> Result<Vec<u8>> {
-    println!("connect payload {:?}", payload);
-    let length = take_length(payload);
-    let protocol_name = take_proto_name(payload, length);
+fn handle_connect(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
+    trace!("connect payload {:?}", payload);
 
-    if protocol_name != "MQTT" {
+    if payload.take_string() != "MQTT" {
         return Err("Invalid protocol name");
     }
 
-    println!("protocolName: {:?} :: length: {:?}", protocol_name, length);
+    if payload.take_one_byte() != 4 {
+        return Err("Invalid protocol level");
+    }
 
-    Ok(vec![])
+    let connect_flags = payload.take_one_byte();
+    let _keep_alive = payload.take_two_bytes();
+
+    let client_id = payload.take_string();
+
+    let password = match is_flag_set(connect_flags, 6) {
+        true => payload.take_string(),
+        false => String::from("n/a"),
+    };
+
+    info!("client_id {:?}, password {:?}", client_id, password);
+
+    debug_assert!(payload.len() == 0);
+
+    Ok(vec![0b00100000, 0b00000010, 0b00000000, 0b00000000])
 }
 
 fn handle_unknown(payload: &mut Vec<u8>) -> Result<Vec<u8>> {
     panic!("Unknown payload: {:?}", payload)
 }
 
-fn take_proto_name(payload: &mut Vec<u8>, length: usize) -> std::string::String {
-    let proto_arr: Vec<u8> = payload.drain(0..length).collect();
-    String::from_utf8(proto_arr).expect("Error unwraping proto_name")
+fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
+    (connect_flags >> pos) & 1 == 1
 }
 
-fn take_length(payload: &mut Vec<u8>) -> usize {
-    let length_arr: Vec<u8> = payload.drain(0..2).collect();
-    ((length_arr[0] as usize) << 8) | (length_arr[1] as usize)
-}
-
-fn variable_length(stream: &mut net::TcpStream) -> u8 {
+fn take_variable_length(stream: &mut Read) -> usize {
     let mut multiplier = 1;
     let mut value: u8 = 0;
     let mut encoded_byte = [0];
@@ -91,36 +134,57 @@ fn variable_length(stream: &mut net::TcpStream) -> u8 {
             panic!();
         }
     }
-    value
+    value as usize
 }
 
 fn main() {
+    simple_logger::init().unwrap();
+
     let data = Arc::new(Mutex::new(vec![1u32, 2, 3]));
 
     if let Ok(listener) = net::TcpListener::bind("127.0.0.1:1883") {
-        println!("Server is listening: {:?}", listener);
+        info!("Server is listening: {:?}", listener);
         for stream_result in listener.incoming() {
             let data = data.clone();
             thread::spawn(move || {
                 let mut data = data.lock().unwrap();
                 let mut stream = stream_result.unwrap();
 
-                println!("Hello from a thread! {:?}", data[0]);
+                trace!("Hello from a thread! {:?}", data[0]);
                 handle_client(&mut stream);
 
                 data[0] += 1;
             });
         }
     } else {
-        println!("Couldn't create a listener on port 8080");
+        error!("Couldn't create a listener on port 8080");
     }
 }
 
 #[test]
-fn test_length() {
-    assert_eq!(take_length(&mut vec![0b00000000, 0b00000000]), 0);
-    assert_eq!(take_length(&mut vec![0b00000000, 0b00000001]), 1);
-    assert_eq!(take_length(&mut vec![0b00000001, 0b00000000]), 256);
-    assert_eq!(take_length(&mut vec![0b00000001, 0b00000001]), 257);
-    assert_eq!(take_length(&mut vec![0b00000001, 0b00000001, 1]), 257);
+fn test_take_two_bytes() {
+    assert_eq!(MQTTPayload::from(vec![0b00000000, 0b00000000]).take_two_bytes(), 0);
 }
+
+#[test]
+fn test_take_one_byte() {
+    assert_eq!(MQTTPayload::from(vec![0b00000000]).take_one_byte(), 0);
+}
+
+#[test]
+fn test_is_flag_set() {
+    assert!(is_flag_set(0b000000010, 1));
+    assert!(is_flag_set(0b000000001, 0));
+}
+
+#[test]
+fn test_length() {
+    assert_eq!(MQTTPayload::from(vec![0b00000000, 0b00000000]).take_length(), 0);
+    assert_eq!(MQTTPayload::from(vec![0b00000000, 0b00000001]).take_length(), 1);
+    assert_eq!(MQTTPayload::from(vec![0b00000001, 0b00000000]).take_length(), 256);
+    assert_eq!(MQTTPayload::from(vec![0b00000001, 0b00000001]).take_length(), 257);
+    assert_eq!(MQTTPayload::from(vec![0b00000001, 0b00000001, 1]).take_length(), 257);
+}
+
+#[test]
+fn test_take_variable_length() {}
