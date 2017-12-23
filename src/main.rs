@@ -97,12 +97,22 @@ fn handle_connect(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
 
     let client_id = payload.take_string();
 
+    if is_flag_set(connect_flags, 2) {
+        let _will = (payload.take_string(), payload.take_string(), (connect_flags & 0b00011000) >> 4);
+        info!("will: {:?}", _will);
+    }
+
+    let _user_name = match is_flag_set(connect_flags, 7) {
+        true => payload.take_string(),
+        false => String::from("n/a"),
+    };
+
     let password = match is_flag_set(connect_flags, 6) {
         true => payload.take_string(),
         false => String::from("n/a"),
     };
 
-    info!("client_id {:?}, password {:?}", client_id, password);
+    info!("client_id: {:?}, username: {:?}, pwd: {:?}", client_id, _user_name, password);
 
     debug_assert!(payload.len() == 0);
 
