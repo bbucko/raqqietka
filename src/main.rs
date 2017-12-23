@@ -9,8 +9,10 @@ extern crate log;
 extern crate simple_logger;
 
 type Result<T> = result::Result<T, &'static str>;
-
 type MQTTPayload = Vec<u8>;
+
+const THRESHOLD: i32 = 128 * 128 * 128;
+
 
 trait MQTTSupport {
     fn take_string(&mut self) -> std::string::String;
@@ -42,12 +44,12 @@ impl MQTTSupport for MQTTPayload {
     }
 }
 
-fn handle_client(stream: &mut net::TcpStream) {
+fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io::Error> {
     info!("new client: {:?}", stream);
 
     loop {
         let mut fixed_header = [0];
-        let _ = stream.read_exact(&mut fixed_header);
+        let _ = stream.read_exact(&mut fixed_header)?;
 
         let packet_type = fixed_header[0] >> 4;
         let flags = fixed_header[0] & 0b00001111;
@@ -61,8 +63,8 @@ fn handle_client(stream: &mut net::TcpStream) {
 
         let remaining_length = take_variable_length(stream);
 
-        let mut payload = MQTTPayload::with_capacity(remaining_length);
-        let _ = stream.read_exact(&mut payload);
+        let mut payload: MQTTPayload = vec![0; remaining_length];
+        stream.read_exact(&mut payload)?;
 
         let response = match packet_type {
             1 => handle_connect(&mut payload),
@@ -70,15 +72,14 @@ fn handle_client(stream: &mut net::TcpStream) {
         };
 
         match response {
-            Ok(result) => {
-                match stream.write(&result) {
-                    Err(_) => break,
-                    Ok(_) => continue,
-                }
-            }
+            Ok(data) => match stream.write(&data) {
+                Ok(_) => continue,
+                Err(_) => break,
+            },
             Err(err_msg) => panic!("something went wrong: {:?}", err_msg),
         }
     }
+    Ok(())
 }
 
 fn handle_connect(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
@@ -114,7 +115,7 @@ fn handle_unknown(payload: &mut Vec<u8>) -> Result<Vec<u8>> {
 }
 
 fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
-    (connect_flags >> pos) & 1 == 1
+    (connect_flags >> pos) & 0b00000001 == 0b00000001
 }
 
 fn take_variable_length(stream: &mut Read) -> usize {
@@ -122,18 +123,20 @@ fn take_variable_length(stream: &mut Read) -> usize {
     let mut value: u8 = 0;
     let mut encoded_byte = [0];
 
-    let _ = stream.read_exact(&mut encoded_byte);
-    value += (encoded_byte[0] & 127) * multiplier;
-    multiplier *= 128;
-
-    while encoded_byte[0] & 128 != 0 {
+    loop {
         let _ = stream.read_exact(&mut encoded_byte);
         value += (encoded_byte[0] & 127) * multiplier;
         multiplier *= 128;
-        if multiplier > 128 * 128 * 128 {
-            panic!();
+
+        if multiplier as i32 > THRESHOLD {
+            panic!("variable length multiplier exceeds threshold");
+        }
+
+        if encoded_byte[0] & 128 == 0 {
+            break;
         }
     }
+    info!("length: {:?}", value);
     value as usize
 }
 
@@ -151,7 +154,7 @@ fn main() {
                 let mut stream = stream_result.unwrap();
 
                 trace!("Hello from a thread! {:?}", data[0]);
-                handle_client(&mut stream);
+                let _ = handle_client(&mut stream);
 
                 data[0] += 1;
             });
@@ -175,6 +178,7 @@ fn test_take_one_byte() {
 fn test_is_flag_set() {
     assert!(is_flag_set(0b000000010, 1));
     assert!(is_flag_set(0b000000001, 0));
+    assert!(is_flag_set(0b011111111, 0));
 }
 
 #[test]
@@ -187,4 +191,6 @@ fn test_length() {
 }
 
 #[test]
-fn test_take_variable_length() {}
+fn test_take_variable_length() {
+//    assert_eq!(MQTTPayload::from(vec![0b00000000, 0b00000000]).take_variable_length(), 0);
+}
