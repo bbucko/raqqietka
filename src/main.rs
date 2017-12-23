@@ -54,7 +54,7 @@ fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io
         let flags = fixed_header[0] & 0b00001111;
 
         info!(
-            "header: {:08b} packet_type: {:08b} flags: {:08b}",
+            "header: {:08b} packet_type: {:?} flags: {:08b}",
             fixed_header[0],
             packet_type,
             flags
@@ -67,6 +67,7 @@ fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io
 
         let response = match packet_type {
             1 => handle_connect(&mut payload),
+            12 => handle_pingreq(&mut payload),
             _ => handle_unknown(&mut payload),
         };
 
@@ -81,8 +82,14 @@ fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io
     Ok(())
 }
 
+fn handle_pingreq(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
+    trace!("PINGREQ payload {:?}", payload);
+
+    Ok(vec![0b11010000, 0b00000000])
+}
+
 fn handle_connect(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
-    trace!("connect payload {:?}", payload);
+    trace!("CONNECT payload {:?}", payload);
 
     if payload.take_string() != "MQTT" {
         return Err("Invalid protocol name");
