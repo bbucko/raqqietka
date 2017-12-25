@@ -67,9 +67,12 @@ fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io
 
         let response = match packet_type {
             1 => handle_connect(&mut payload),
+            8 => handle_subscribe(&mut payload),
             12 => handle_pingreq(&mut payload),
             _ => handle_unknown(&mut payload),
         };
+
+        trace!("rsp: {:?}", response);
 
         match response {
             Ok(data) => match stream.write(&data) {
@@ -80,12 +83,6 @@ fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io
         }
     }
     Ok(())
-}
-
-fn handle_pingreq(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
-    trace!("PINGREQ payload {:?}", payload);
-
-    Ok(vec![0b11010000, 0b00000000])
 }
 
 fn handle_connect(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
@@ -119,11 +116,39 @@ fn handle_connect(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
         false => String::from("n/a"),
     };
 
-    info!("client_id: {:?}, username: {:?}, pwd: {:?}", client_id, _user_name, password);
-
     debug_assert!(payload.len() == 0);
 
+    info!("connected client_id: {:?}, username: {:?}, pwd: {:?}", client_id, _user_name, password);
+
     Ok(vec![0b00100000, 0b00000010, 0b00000000, 0b00000000])
+}
+
+fn handle_subscribe(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
+    trace!("SUBSCRIBE payload {:?}", payload);
+
+    let packet_identifier = payload.take_two_bytes();
+    let mut topics = Vec::new();
+    while payload.len() > 0 {
+        let topic_filter = payload.take_string();
+        let topic_qos = payload.take_one_byte();
+
+        info!("filter {:?} :: qos {:?}", topic_filter, topic_qos);
+
+        topics.push((topic_filter, topic_qos));
+    }
+    let mut response = vec![0b10010000, 2 + topics.len() as u8, (packet_identifier >> 8) as u8, packet_identifier as u8];
+
+    for (_, topic_qos) in topics {
+        response.push(topic_qos);
+    }
+
+    Ok(response)
+}
+
+fn handle_pingreq(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
+    trace!("PINGREQ payload {:?}", payload);
+
+    Ok(vec![0b11010000, 0b00000000])
 }
 
 fn handle_unknown(payload: &mut Vec<u8>) -> Result<Vec<u8>> {

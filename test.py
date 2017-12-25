@@ -11,4 +11,6 @@ client.on_connect = on_connect
 client.username_pw_set("username", "password")
 client.will_set("/abc", "will", 0)
 client.connect("localhost", 1883, 60)
-client.loop_forever()
+client.subscribe("/something", 0)
+client.subscribe("/something/else", 1)
+client.subscribe([("/qos", 0), ("/something/else", 1)])
