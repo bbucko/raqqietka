@@ -18,6 +18,7 @@ trait MQTTSupport {
     fn take_length(&mut self) -> usize;
     fn take_one_byte(&mut self) -> u8;
     fn take_two_bytes(&mut self) -> u16;
+    fn take_payload(&mut self) -> Vec<u8>;
 }
 
 impl MQTTSupport for MQTTPayload {
@@ -41,6 +42,10 @@ impl MQTTSupport for MQTTPayload {
         let keep_alive: Vec<u8> = self.drain(0..2).collect();
         ((keep_alive[0] as u16) << 8) | (keep_alive[1] as u16)
     }
+
+    fn take_payload(&mut self) -> Vec<u8> {
+        self.drain(0..).collect()
+    }
 }
 
 fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io::Error> {
@@ -53,12 +58,7 @@ fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io
         let packet_type = fixed_header[0] >> 4;
         let flags = fixed_header[0] & 0b00001111;
 
-        info!(
-            "header: {:08b} packet_type: {:?} flags: {:08b}",
-            fixed_header[0],
-            packet_type,
-            flags
-        );
+        info!("header: {:08b} packet_type: {:?} flags: {:08b}", fixed_header[0], packet_type, flags);
 
         let remaining_length = take_variable_length(stream);
 
@@ -66,26 +66,40 @@ fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io
         stream.read_exact(&mut payload)?;
 
         let response = match packet_type {
-            1 => handle_connect(&mut payload),
-            8 => handle_subscribe(&mut payload),
-            12 => handle_pingreq(&mut payload),
+            1 => handle_connect(&mut payload, flags),
+            3 => handle_publish(&mut payload, flags),
+            8 => handle_subscribe(&mut payload, flags),
+            12 => handle_pingreq(&mut payload, flags),
+            14 => handle_disconnect(&mut payload, flags),
             _ => handle_unknown(&mut payload),
         };
 
         trace!("rsp: {:?}", response);
 
         match response {
-            Ok(data) => match stream.write(&data) {
-                Ok(_) => continue,
-                Err(_) => break,
-            },
+            Ok(data) => {
+                if data.is_empty() {
+                    match stream.shutdown(net::Shutdown::Both) {
+                        Ok(_) => continue,
+                        Err(error) => {
+                            println!("Error: {:?}", error);
+                            break
+                        }
+                    }
+                } else {
+                    match stream.write(&data) {
+                        Ok(_) => continue,
+                        Err(_) => break,
+                    }
+                }
+            }
             Err(err_msg) => panic!("something went wrong: {:?}", err_msg),
         }
     }
     Ok(())
 }
 
-fn handle_connect(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
+fn handle_connect(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
     trace!("CONNECT payload {:?}", payload);
 
     if payload.take_string() != "MQTT" {
@@ -123,10 +137,44 @@ fn handle_connect(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
     Ok(vec![0b00100000, 0b00000010, 0b00000000, 0b00000000])
 }
 
-fn handle_subscribe(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
+fn handle_publish(payload: &mut MQTTPayload, flags: u8) -> Result<Vec<u8>> {
+    trace!("PUBLISH payload {:?}", payload);
+
+    let dup = is_flag_set(flags, 3);
+    let retain = is_flag_set(flags, 0);
+    let qos_level = (flags >> 1) & 0b00000011;
+    info!("dup: {:?} retain: {:?} qos_level: {:?}", dup, retain, qos_level);
+
+    let topic_name = payload.take_string();
+
+    if qos_level > 0 {
+        let packet_identifier = payload.take_two_bytes();
+        info!("Responding to packet id: {:?}", packet_identifier);
+
+
+        let msg = payload.take_payload();
+        info!("publishing payload: {:?} on topic: {:?}", msg, topic_name);
+
+
+        return Ok(vec![0b01000000, 0b00000010, (packet_identifier >> 8) as u8, packet_identifier as u8]);
+    } else {
+        let msg = payload.take_payload();
+        info!("publishing payload: {:?} on topic: {:?}", msg, topic_name);
+    }
+    Ok(vec![0b01000000])
+}
+
+fn handle_disconnect(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
+    trace!("DISCONNECT payload {:?}", payload);
+
+    Ok(vec![])
+}
+
+fn handle_subscribe(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
     trace!("SUBSCRIBE payload {:?}", payload);
 
     let packet_identifier = payload.take_two_bytes();
+
     let mut topics = Vec::new();
     while payload.len() > 0 {
         let topic_filter = payload.take_string();
@@ -136,6 +184,8 @@ fn handle_subscribe(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
 
         topics.push((topic_filter, topic_qos));
     }
+
+    info!("Responding to packet id: {:?}", packet_identifier);
     let mut response = vec![0b10010000, 2 + topics.len() as u8, (packet_identifier >> 8) as u8, packet_identifier as u8];
 
     for (_, topic_qos) in topics {
@@ -145,7 +195,7 @@ fn handle_subscribe(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
     Ok(response)
 }
 
-fn handle_pingreq(payload: &mut MQTTPayload) -> Result<Vec<u8>> {
+fn handle_pingreq(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
     trace!("PINGREQ payload {:?}", payload);
 
     Ok(vec![0b11010000, 0b00000000])
