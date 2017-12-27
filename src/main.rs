@@ -1,7 +1,6 @@
 use std::net;
 use std::io::{Read, Write};
 use std::thread;
-use std::sync::{Mutex, Arc};
 use std::result;
 
 #[macro_use]
@@ -10,8 +9,21 @@ extern crate simple_logger;
 
 static THRESHOLD: u32 = 128 * 128 * 128;
 
-type Result<T> = result::Result<T, &'static str>;
-type MQTTPayload = Vec<u8>;
+#[derive(Debug)]
+enum MQTTError {
+    Io(std::io::Error),
+    Error(),
+}
+
+type MQTTResult<T> = result::Result<T, MQTTError>;
+type Payload = Vec<u8>;
+
+#[derive(Debug, PartialEq)]
+enum Action {
+    Respond(Vec<u8>),
+    Disconnect,
+    Continue,
+}
 
 trait MQTTSupport {
     fn take_string(&mut self) -> std::string::String;
@@ -21,7 +33,7 @@ trait MQTTSupport {
     fn take_payload(&mut self) -> Vec<u8>;
 }
 
-impl MQTTSupport for MQTTPayload {
+impl MQTTSupport for Payload {
     fn take_string(&mut self) -> std::string::String {
         let length = self.take_length();
         let proto_name: Vec<u8> = self.drain(0..length).collect();
@@ -48,12 +60,12 @@ impl MQTTSupport for MQTTPayload {
     }
 }
 
-fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io::Error> {
+fn handle_client(stream: &mut net::TcpStream) -> MQTTResult<()> {
     info!("new client: {:?}", stream);
 
     loop {
         let mut fixed_header = [0];
-        let _ = stream.read_exact(&mut fixed_header)?;
+        stream.read_exact(&mut fixed_header).map_err(MQTTError::Io)?;
 
         let packet_type = fixed_header[0] >> 4;
         let flags = fixed_header[0] & 0b00001111;
@@ -62,8 +74,8 @@ fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io
 
         let remaining_length = take_variable_length(stream);
 
-        let mut payload: MQTTPayload = vec![0; remaining_length];
-        stream.read_exact(&mut payload)?;
+        let mut payload: Payload = vec![0; remaining_length];
+        stream.read_exact(&mut payload).map_err(MQTTError::Io)?;
 
         let response = match packet_type {
             1 => handle_connect(&mut payload, flags),
@@ -72,42 +84,29 @@ fn handle_client(stream: &mut net::TcpStream) -> std::result::Result<(), std::io
             12 => handle_pingreq(&mut payload, flags),
             14 => handle_disconnect(&mut payload, flags),
             _ => handle_unknown(&mut payload),
+        }?;
+
+        trace!("response: {:?}", response);
+
+        let written_bytes = match response {
+            Action::Continue => continue,
+            Action::Disconnect => return Ok(()),
+            Action::Respond(data) => stream.write(&data).map_err(MQTTError::Io)?,
         };
 
-        trace!("rsp: {:?}", response);
-
-        match response {
-            Ok(data) => {
-                if data.is_empty() {
-                    match stream.shutdown(net::Shutdown::Both) {
-                        Ok(_) => continue,
-                        Err(error) => {
-                            println!("Error: {:?}", error);
-                            break
-                        }
-                    }
-                } else {
-                    match stream.write(&data) {
-                        Ok(_) => continue,
-                        Err(_) => break,
-                    }
-                }
-            }
-            Err(err_msg) => panic!("something went wrong: {:?}", err_msg),
-        }
+        trace!("written bytes: {:?}", written_bytes);
     }
-    Ok(())
 }
 
-fn handle_connect(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
+fn handle_connect(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
     trace!("CONNECT payload {:?}", payload);
 
     if payload.take_string() != "MQTT" {
-        return Err("Invalid protocol name");
+        return Err(MQTTError::Error());
     }
 
     if payload.take_one_byte() != 4 {
-        return Err("Invalid protocol level");
+        return Err(MQTTError::Error());
     }
 
     let connect_flags = payload.take_one_byte();
@@ -134,10 +133,10 @@ fn handle_connect(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
 
     info!("connected client_id: {:?}, username: {:?}, pwd: {:?}", client_id, _user_name, password);
 
-    Ok(vec![0b00100000, 0b00000010, 0b00000000, 0b00000000])
+    Ok(Action::Respond(vec![0b00100000, 0b00000010, 0b00000000, 0b00000000]))
 }
 
-fn handle_publish(payload: &mut MQTTPayload, flags: u8) -> Result<Vec<u8>> {
+fn handle_publish(payload: &mut Payload, flags: u8) -> MQTTResult<Action> {
     trace!("PUBLISH payload {:?}", payload);
 
     let dup = is_flag_set(flags, 3);
@@ -151,26 +150,18 @@ fn handle_publish(payload: &mut MQTTPayload, flags: u8) -> Result<Vec<u8>> {
         let packet_identifier = payload.take_two_bytes();
         info!("Responding to packet id: {:?}", packet_identifier);
 
-
         let msg = payload.take_payload();
         info!("publishing payload: {:?} on topic: {:?}", msg, topic_name);
 
-
-        return Ok(vec![0b01000000, 0b00000010, (packet_identifier >> 8) as u8, packet_identifier as u8]);
-    } else {
-        let msg = payload.take_payload();
-        info!("publishing payload: {:?} on topic: {:?}", msg, topic_name);
+        return Ok(Action::Respond(vec![0b01000000, 0b00000010, (packet_identifier >> 8) as u8, packet_identifier as u8]));
     }
-    Ok(vec![0b01000000])
+
+    let msg = payload.take_payload();
+    info!("publishing payload: {:?} on topic: {:?}", msg, topic_name);
+    Ok(Action::Continue)
 }
 
-fn handle_disconnect(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
-    trace!("DISCONNECT payload {:?}", payload);
-
-    Ok(vec![])
-}
-
-fn handle_subscribe(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
+fn handle_subscribe(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
     trace!("SUBSCRIBE payload {:?}", payload);
 
     let packet_identifier = payload.take_two_bytes();
@@ -192,16 +183,22 @@ fn handle_subscribe(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
         response.push(topic_qos);
     }
 
-    Ok(response)
+    Ok(Action::Respond(response))
 }
 
-fn handle_pingreq(payload: &mut MQTTPayload, _flags: u8) -> Result<Vec<u8>> {
+fn handle_pingreq(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
     trace!("PINGREQ payload {:?}", payload);
 
-    Ok(vec![0b11010000, 0b00000000])
+    Ok(Action::Respond(vec![0b11010000, 0b00000000]))
 }
 
-fn handle_unknown(payload: &mut Vec<u8>) -> Result<Vec<u8>> {
+fn handle_disconnect(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
+    trace!("DISCONNECT payload {:?}", payload);
+
+    Ok(Action::Disconnect)
+}
+
+fn handle_unknown(payload: &mut Vec<u8>) -> MQTTResult<Action> {
     panic!("Unknown payload: {:?}", payload)
 }
 
@@ -234,20 +231,12 @@ fn take_variable_length(stream: &mut Read) -> usize {
 fn main() {
     simple_logger::init().unwrap();
 
-    let data = Arc::new(Mutex::new(vec![1u32, 2, 3]));
-
     if let Ok(listener) = net::TcpListener::bind("127.0.0.1:1883") {
         info!("Server is listening: {:?}", listener);
         for stream_result in listener.incoming() {
-            let data = data.clone();
             thread::spawn(move || {
-                let mut data = data.lock().unwrap();
                 let mut stream = stream_result.unwrap();
-
-                trace!("Hello from a thread! {:?}", data[0]);
                 let _ = handle_client(&mut stream);
-
-                data[0] += 1;
             });
         }
     } else {
@@ -257,12 +246,12 @@ fn main() {
 
 #[test]
 fn test_take_two_bytes() {
-    assert_eq!(MQTTPayload::from(vec![0b00000000, 0b00000000]).take_two_bytes(), 0);
+    assert_eq!(Payload::from(vec![0b00000000, 0b00000000]).take_two_bytes(), 0);
 }
 
 #[test]
 fn test_take_one_byte() {
-    assert_eq!(MQTTPayload::from(vec![0b00000000]).take_one_byte(), 0);
+    assert_eq!(Payload::from(vec![0b00000000]).take_one_byte(), 0);
 }
 
 #[test]
@@ -274,11 +263,11 @@ fn test_is_flag_set() {
 
 #[test]
 fn test_length() {
-    assert_eq!(MQTTPayload::from(vec![0b00000000, 0b00000000]).take_length(), 0);
-    assert_eq!(MQTTPayload::from(vec![0b00000000, 0b00000001]).take_length(), 1);
-    assert_eq!(MQTTPayload::from(vec![0b00000001, 0b00000000]).take_length(), 256);
-    assert_eq!(MQTTPayload::from(vec![0b00000001, 0b00000001]).take_length(), 257);
-    assert_eq!(MQTTPayload::from(vec![0b00000001, 0b00000001, 1]).take_length(), 257);
+    assert_eq!(Payload::from(vec![0b00000000, 0b00000000]).take_length(), 0);
+    assert_eq!(Payload::from(vec![0b00000000, 0b00000001]).take_length(), 1);
+    assert_eq!(Payload::from(vec![0b00000001, 0b00000000]).take_length(), 256);
+    assert_eq!(Payload::from(vec![0b00000001, 0b00000001]).take_length(), 257);
+    assert_eq!(Payload::from(vec![0b00000001, 0b00000001, 1]).take_length(), 257);
 }
 
 #[test]
