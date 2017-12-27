@@ -7,6 +7,10 @@ use std::result;
 extern crate log;
 extern crate simple_logger;
 
+#[cfg(test)]
+#[macro_use(matches, _matches_tt_as_expr_hack)]
+extern crate matches;
+
 static THRESHOLD: u32 = 128 * 128 * 128;
 
 #[derive(Debug)]
@@ -64,28 +68,7 @@ fn handle_client(stream: &mut net::TcpStream) -> MQTTResult<()> {
     info!("new client: {:?}", stream);
 
     loop {
-        let mut fixed_header = [0];
-        stream.read_exact(&mut fixed_header).map_err(MQTTError::Io)?;
-
-        let packet_type = fixed_header[0] >> 4;
-        let flags = fixed_header[0] & 0b00001111;
-
-        info!("header: {:08b} packet_type: {:?} flags: {:08b}", fixed_header[0], packet_type, flags);
-
-        let remaining_length = take_variable_length(stream);
-
-        let mut payload: Payload = vec![0; remaining_length];
-        stream.read_exact(&mut payload).map_err(MQTTError::Io)?;
-
-        let response = match packet_type {
-            1 => handle_connect(&mut payload, flags),
-            3 => handle_publish(&mut payload, flags),
-            8 => handle_subscribe(&mut payload, flags),
-            12 => handle_pingreq(&mut payload, flags),
-            14 => handle_disconnect(&mut payload, flags),
-            _ => handle_unknown(&mut payload),
-        }?;
-
+        let response = handle_packet(stream)?;
         trace!("response: {:?}", response);
 
         let written_bytes = match response {
@@ -95,6 +78,29 @@ fn handle_client(stream: &mut net::TcpStream) -> MQTTResult<()> {
         };
 
         trace!("written bytes: {:?}", written_bytes);
+    }
+}
+
+fn handle_packet(stream: &mut std::io::Read) -> MQTTResult<Action> {
+    let mut fixed_header = [0];
+    stream.read_exact(&mut fixed_header).map_err(MQTTError::Io)?;
+
+    let packet_type = fixed_header[0] >> 4;
+    let flags = fixed_header[0] & 0b00001111;
+
+    info!("header: {:08b} packet_type: {:?} flags: {:08b}", fixed_header[0], packet_type, flags);
+    let remaining_length = take_variable_length(stream);
+
+    let mut payload: Payload = vec![0; remaining_length];
+    stream.read_exact(&mut payload).map_err(MQTTError::Io)?;
+
+    match packet_type {
+        1 => handle_connect(&mut payload, flags),
+        3 => handle_publish(&mut payload, flags),
+        8 => handle_subscribe(&mut payload, flags),
+        12 => handle_pingreq(&mut payload, flags),
+        14 => handle_disconnect(&mut payload, flags),
+        _ => handle_unknown(&mut payload),
     }
 }
 
@@ -244,49 +250,83 @@ fn main() {
     }
 }
 
-#[test]
-fn test_take_two_bytes() {
-    assert_eq!(Payload::from(vec![0b00000000, 0b00000000]).take_two_bytes(), 0);
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[test]
-fn test_take_one_byte() {
-    assert_eq!(Payload::from(vec![0b00000000]).take_one_byte(), 0);
-}
+    #[test]
+    fn test_take_two_bytes() {
+        assert_eq!(Payload::from(vec![0b00000000, 0b00000000]).take_two_bytes(), 0);
+    }
 
-#[test]
-fn test_is_flag_set() {
-    assert!(is_flag_set(0b000000010, 1));
-    assert!(is_flag_set(0b000000001, 0));
-    assert!(is_flag_set(0b011111111, 0));
-}
+    #[test]
+    fn test_take_one_byte() {
+        assert_eq!(Payload::from(vec![0b00000000]).take_one_byte(), 0);
+    }
 
-#[test]
-fn test_length() {
-    assert_eq!(Payload::from(vec![0b00000000, 0b00000000]).take_length(), 0);
-    assert_eq!(Payload::from(vec![0b00000000, 0b00000001]).take_length(), 1);
-    assert_eq!(Payload::from(vec![0b00000001, 0b00000000]).take_length(), 256);
-    assert_eq!(Payload::from(vec![0b00000001, 0b00000001]).take_length(), 257);
-    assert_eq!(Payload::from(vec![0b00000001, 0b00000001, 1]).take_length(), 257);
-}
+    #[test]
+    fn test_is_flag_set() {
+        assert!(is_flag_set(0b000000010, 1));
+        assert!(is_flag_set(0b000000001, 0));
+        assert!(is_flag_set(0b011111111, 0));
+    }
 
-#[test]
-fn test_take_variable_length() {
-    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0b00000000])), 0);
-    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x7F])), 127);
+    #[test]
+    fn test_length() {
+        assert_eq!(Payload::from(vec![0b00000000, 0b00000000]).take_length(), 0);
+        assert_eq!(Payload::from(vec![0b00000000, 0b00000001]).take_length(), 1);
+        assert_eq!(Payload::from(vec![0b00000001, 0b00000000]).take_length(), 256);
+        assert_eq!(Payload::from(vec![0b00000001, 0b00000001]).take_length(), 257);
+        assert_eq!(Payload::from(vec![0b00000001, 0b00000001, 1]).take_length(), 257);
+    }
 
-    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x01])), 128);
-    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0x7F])), 16_383);
+    #[test]
+    #[should_panic]
+    fn test_unknown_packet() {
+        let _ = handle_packet(&mut std::io::Cursor::new(vec![0b00000000]));
+    }
 
-    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x80, 0x01])), 16_384);
-    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0x7F])), 2_097_151);
+    #[test]
+    fn test_parse_connect() {
+        let _expected_data = Action::Respond(vec![77, 81, 84, 84]);
 
-    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x80, 0x80, 0x01])), 2_097_152);
-    assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x7F])), 268_435_455);
-}
+        assert!(matches!(handle_packet(&mut std::io::Cursor::new(vec![16, 15, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99])), Ok(_expected_data)));
+    }
 
-#[test]
-#[should_panic]
-fn test_take_variable_length_malformed() {
-    take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x8F]));
+    #[test]
+    #[ignore]
+    fn test_parse_publish_qos2() {
+        let _expected_data = Action::Continue;
+
+        assert!(matches!(handle_packet(&mut std::io::Cursor::new(vec![])), Ok(_expected_data)));
+    }
+
+    #[test]
+    #[ignore]
+    fn test_parse_publish_qos1() {
+        let _expected_data = Action::Respond(vec![]);
+
+        assert!(matches!(handle_packet(&mut std::io::Cursor::new(vec![])), Ok(_expected_data)));
+    }
+
+    #[test]
+    fn test_take_variable_length() {
+        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0b00000000])), 0);
+        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x7F])), 127);
+
+        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x01])), 128);
+        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0x7F])), 16_383);
+
+        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x80, 0x01])), 16_384);
+        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0x7F])), 2_097_151);
+
+        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x80, 0x80, 0x01])), 2_097_152);
+        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x7F])), 268_435_455);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_take_variable_length_malformed() {
+        take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x8F]));
+    }
 }

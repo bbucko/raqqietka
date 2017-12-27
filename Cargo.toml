@@ -12,3 +12,6 @@ simple_logger = "0.4.0"
 #tokio-core = "0.1"
 #tokio-proto = "0.1"
 #tokio-service = "0.1"
+
+[dev-dependencies]
+matches = "0.1.6"
