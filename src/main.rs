@@ -51,7 +51,7 @@ fn handle_packet(mut stream: &mut io::Read) -> MQTTResult<Action> {
     let fixed_header = buf[0];
 
     let packet_type = fixed_header >> 4;
-    let flags = fixed_header & 0b00001111;
+    let flags = fixed_header & 0b0000_1111;
 
     info!("header: {:08b} packet_type: {} flags: {:08b}", fixed_header, packet_type, flags);
     let remaining_length = stream.take_variable_length();
@@ -88,26 +88,20 @@ fn handle_connect(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
         let _will = (
             payload.take_string(),
             payload.take_string(),
-            (connect_flags & 0b00011000) >> 4,
+            (connect_flags & 0b0001_1000) >> 4,
         );
         info!("will: {:?}", _will);
     }
 
-    let _user_name = match is_flag_set(connect_flags, 7) {
-        true => payload.take_string(),
-        false => String::from("n/a"),
-    };
+    let _user_name = if is_flag_set(connect_flags, 7) { payload.take_string() } else { String::from("n/a") };
 
-    let password = match is_flag_set(connect_flags, 6) {
-        true => payload.take_string(),
-        false => String::from("n/a"),
-    };
+    let password = if is_flag_set(connect_flags, 7) { payload.take_string() } else { String::from("n/a") };
 
-    debug_assert!(payload.len() == 0);
+    debug_assert!(payload.is_empty());
 
     info!("connected client_id: {}, username: {}, pwd: {}", client_id, _user_name, password);
 
-    Ok(Action::Respond(vec![0b00100000, 0b00000010, 0b00000000, 0b00000000]))
+    Ok(Action::Respond(vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]))
 }
 
 fn handle_publish(payload: &mut Vec<u8>, flags: u8) -> MQTTResult<Action> {
@@ -115,7 +109,7 @@ fn handle_publish(payload: &mut Vec<u8>, flags: u8) -> MQTTResult<Action> {
 
     let dup = is_flag_set(flags, 3);
     let retain = is_flag_set(flags, 0);
-    let qos_level = (flags >> 1) & 0b00000011;
+    let qos_level = (flags >> 1) & 0b0000_0011;
     info!("dup: {} retain: {} qos_level: {}", dup, retain, qos_level);
 
     let topic_name = payload.take_string();
@@ -131,7 +125,7 @@ fn handle_publish(payload: &mut Vec<u8>, flags: u8) -> MQTTResult<Action> {
             let msg = payload.take_payload();
             info!("publishing payload: {:?} on topic: {} in response to packet_id: {}", msg, topic_name, packet_identifier);
 
-            Ok(Action::Respond(vec![0b01000000, 0b00000010, (packet_identifier >> 8) as u8, packet_identifier as u8, ]))
+            Ok(Action::Respond(vec![0b0100_0000, 0b0000_0010, (packet_identifier >> 8) as u8, packet_identifier as u8, ]))
         }
         _ => Err(MQTTError::Generic("Invalid QOS")),
     }
@@ -143,7 +137,7 @@ fn handle_subscribe(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     let packet_identifier = payload.take_two_bytes();
 
     let mut topics = Vec::new();
-    while payload.len() > 0 {
+    while !payload.is_empty() {
         let topic_filter = payload.take_string();
         let topic_qos = payload.take_one_byte();
 
@@ -153,7 +147,7 @@ fn handle_subscribe(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     }
 
     info!("Responding to packet id: {}", packet_identifier);
-    let mut response = vec![0b10010000, 2 + topics.len() as u8, (packet_identifier >> 8) as u8, packet_identifier as u8, ];
+    let mut response = vec![0b1001_0000, 2 + topics.len() as u8, (packet_identifier >> 8) as u8, packet_identifier as u8, ];
 
     for (_, topic_qos) in topics {
         response.push(topic_qos);
@@ -165,7 +159,7 @@ fn handle_subscribe(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
 fn handle_pingreq(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     trace!("PINGREQ payload {:?}", payload);
 
-    Ok(Action::Respond(vec![0b11010000, 0b00000000]))
+    Ok(Action::Respond(vec![0b1101_0000, 0b0000_0000]))
 }
 
 fn handle_disconnect(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
@@ -179,7 +173,7 @@ fn handle_unknown(payload: &mut Vec<u8>) -> MQTTResult<Action> {
 }
 
 pub fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
-    (connect_flags >> pos) & 0b00000001 == 0b00000001
+    (connect_flags >> pos) & 0b0000_0001 == 0b0000_0001
 }
 
 
@@ -205,15 +199,15 @@ mod tests {
 
     #[test]
     fn test_is_flag_set() {
-        assert!(is_flag_set(0b000000010, 1));
-        assert!(is_flag_set(0b000000001, 0));
-        assert!(is_flag_set(0b011111111, 0));
+        assert!(is_flag_set(0b0000_00010, 1));
+        assert!(is_flag_set(0b0000_00001, 0));
+        assert!(is_flag_set(0b0111_11111, 0));
     }
 
     #[test]
     #[should_panic]
     fn test_unknown_packet() {
-        let _ = handle_packet(&mut std::io::Cursor::new(vec![0b00000000]));
+        let _ = handle_packet(&mut std::io::Cursor::new(vec![0b0000_0000]));
     }
 
     #[test]

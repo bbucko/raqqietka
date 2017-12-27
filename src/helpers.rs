@@ -18,7 +18,7 @@ impl<T> MQTTRead for T
 
         loop {
             let _ = self.read_exact(&mut encoded_byte);
-            value += (encoded_byte[0] & 127) as u32 * multiplier;
+            value += u32::from(encoded_byte[0] & 127) * multiplier;
             multiplier *= 128;
 
             if encoded_byte[0] & 128 == 0 {
@@ -58,7 +58,7 @@ impl MQTTVector for Vec<u8> {
 
     fn take_two_bytes(&mut self) -> u16 {
         let keep_alive: Vec<u8> = self.drain(0..2).collect();
-        ((keep_alive[0] as u16) << 8) | (keep_alive[1] as u16)
+        (u16::from(keep_alive[0]) << 8) | u16::from(keep_alive[1])
     }
 
     fn take_payload(&mut self) -> Vec<u8> {
