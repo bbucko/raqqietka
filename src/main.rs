@@ -1,71 +1,34 @@
-use std::net;
-use std::io::{Read, Write};
+mod helpers;
+
+use helpers::*;
+use std::io;
+use std::io::Write;
 use std::thread;
+use std::net;
 use std::result;
 
 #[macro_use]
 extern crate log;
 extern crate simple_logger;
 
-#[cfg(test)]
-#[macro_use(matches, _matches_tt_as_expr_hack)]
-extern crate matches;
-
-static THRESHOLD: u32 = 128 * 128 * 128;
-
 #[derive(Debug)]
-enum MQTTError {
-    Io(std::io::Error),
-    Error(&'static str),
+pub enum MQTTError {
+    Io(io::Error),
+    Generic(&'static str),
 }
-
-type MQTTResult<T> = result::Result<T, MQTTError>;
-type Payload = Vec<u8>;
 
 #[derive(Debug, PartialEq)]
-enum Action {
+pub enum Action {
     Respond(Vec<u8>),
-    Disconnect,
     Continue,
+    Disconnect,
 }
 
-trait MQTTSupport {
-    fn take_string(&mut self) -> std::string::String;
-    fn take_length(&mut self) -> usize;
-    fn take_one_byte(&mut self) -> u8;
-    fn take_two_bytes(&mut self) -> u16;
-    fn take_payload(&mut self) -> Vec<u8>;
-}
 
-impl MQTTSupport for Payload {
-    fn take_string(&mut self) -> std::string::String {
-        let length = self.take_length();
-        let proto_name: Vec<u8> = self.drain(0..length).collect();
-        String::from_utf8(proto_name).expect("Error unwrapping string")
-    }
-
-    fn take_length(&mut self) -> usize {
-        let length: Vec<u8> = self.drain(0..2).collect();
-        ((length[0] as usize) << 8) | (length[1] as usize)
-    }
-
-    fn take_one_byte(&mut self) -> u8 {
-        let take_flags: Vec<u8> = self.drain(0..1).collect();
-        take_flags[0]
-    }
-
-    fn take_two_bytes(&mut self) -> u16 {
-        let keep_alive: Vec<u8> = self.drain(0..2).collect();
-        ((keep_alive[0] as u16) << 8) | (keep_alive[1] as u16)
-    }
-
-    fn take_payload(&mut self) -> Vec<u8> {
-        self.drain(0..).collect()
-    }
-}
+pub type MQTTResult<T> = result::Result<T, MQTTError>;
 
 fn handle_client(stream: &mut net::TcpStream) -> MQTTResult<()> {
-    info!("new client: {:?}", stream);
+    info!("new client connected: {:?}", stream);
 
     loop {
         let response = handle_packet(stream)?;
@@ -77,21 +40,22 @@ fn handle_client(stream: &mut net::TcpStream) -> MQTTResult<()> {
             Action::Respond(data) => stream.write(&data).map_err(MQTTError::Io)?,
         };
 
-        trace!("written bytes: {:?}", written_bytes);
+        trace!("written bytes: {}", written_bytes);
     }
 }
 
-fn handle_packet(stream: &mut std::io::Read) -> MQTTResult<Action> {
-    let mut fixed_header = [0];
-    stream.read_exact(&mut fixed_header).map_err(MQTTError::Io)?;
+fn handle_packet(mut stream: &mut io::Read) -> MQTTResult<Action> {
+    let mut buf = [0];
+    stream.read_exact(&mut buf).map_err(MQTTError::Io)?;
 
-    let packet_type = fixed_header[0] >> 4;
-    let flags = fixed_header[0] & 0b00001111;
+    let fixed_header = buf[0];
 
-    info!("header: {:08b} packet_type: {:?} flags: {:08b}", fixed_header[0], packet_type, flags);
-    let remaining_length = take_variable_length(stream);
+    let packet_type = fixed_header >> 4;
+    let flags = fixed_header & 0b00001111;
 
-    let mut payload: Payload = vec![0; remaining_length];
+    info!("header: {:08b} packet_type: {} flags: {:08b}", fixed_header, packet_type, flags);
+    let remaining_length = stream.take_variable_length();
+    let mut payload = vec![0; remaining_length];
     stream.read_exact(&mut payload).map_err(MQTTError::Io)?;
 
     match packet_type {
@@ -104,15 +68,15 @@ fn handle_packet(stream: &mut std::io::Read) -> MQTTResult<Action> {
     }
 }
 
-fn handle_connect(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
+fn handle_connect(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     trace!("CONNECT payload {:?}", payload);
 
     if payload.take_string() != "MQTT" {
-        return Err(MQTTError::Error("Invalid proto name"));
+        return Err(MQTTError::Generic("Invalid proto name"));
     }
 
     if payload.take_one_byte() != 4 {
-        return Err(MQTTError::Error("Invalid version"));
+        return Err(MQTTError::Generic("Invalid version"));
     }
 
     let connect_flags = payload.take_one_byte();
@@ -121,7 +85,11 @@ fn handle_connect(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
     let client_id = payload.take_string();
 
     if is_flag_set(connect_flags, 2) {
-        let _will = (payload.take_string(), payload.take_string(), (connect_flags & 0b00011000) >> 4);
+        let _will = (
+            payload.take_string(),
+            payload.take_string(),
+            (connect_flags & 0b00011000) >> 4,
+        );
         info!("will: {:?}", _will);
     }
 
@@ -137,37 +105,39 @@ fn handle_connect(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
 
     debug_assert!(payload.len() == 0);
 
-    info!("connected client_id: {:?}, username: {:?}, pwd: {:?}", client_id, _user_name, password);
+    info!("connected client_id: {}, username: {}, pwd: {}", client_id, _user_name, password);
 
     Ok(Action::Respond(vec![0b00100000, 0b00000010, 0b00000000, 0b00000000]))
 }
 
-fn handle_publish(payload: &mut Payload, flags: u8) -> MQTTResult<Action> {
+fn handle_publish(payload: &mut Vec<u8>, flags: u8) -> MQTTResult<Action> {
     trace!("PUBLISH payload {:?}", payload);
 
     let dup = is_flag_set(flags, 3);
     let retain = is_flag_set(flags, 0);
     let qos_level = (flags >> 1) & 0b00000011;
-    info!("dup: {:?} retain: {:?} qos_level: {:?}", dup, retain, qos_level);
+    info!("dup: {} retain: {} qos_level: {}", dup, retain, qos_level);
 
     let topic_name = payload.take_string();
 
-    if qos_level > 0 {
-        let packet_identifier = payload.take_two_bytes();
-        info!("Responding to packet id: {:?}", packet_identifier);
+    match qos_level {
+        0 => {
+            let msg = payload.take_payload();
+            info!("publishing payload: {:?} on topic: {}", msg, topic_name);
+            Ok(Action::Continue)
+        }
+        1 | 2 => {
+            let packet_identifier = payload.take_two_bytes();
+            let msg = payload.take_payload();
+            info!("publishing payload: {:?} on topic: {} in response to packet_id: {}", msg, topic_name, packet_identifier);
 
-        let msg = payload.take_payload();
-        info!("publishing payload: {:?} on topic: {:?}", msg, topic_name);
-
-        return Ok(Action::Respond(vec![0b01000000, 0b00000010, (packet_identifier >> 8) as u8, packet_identifier as u8]));
+            Ok(Action::Respond(vec![0b01000000, 0b00000010, (packet_identifier >> 8) as u8, packet_identifier as u8, ]))
+        }
+        _ => Err(MQTTError::Generic("Invalid QOS")),
     }
-
-    let msg = payload.take_payload();
-    info!("publishing payload: {:?} on topic: {:?}", msg, topic_name);
-    Ok(Action::Continue)
 }
 
-fn handle_subscribe(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
+fn handle_subscribe(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     trace!("SUBSCRIBE payload {:?}", payload);
 
     let packet_identifier = payload.take_two_bytes();
@@ -177,13 +147,13 @@ fn handle_subscribe(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
         let topic_filter = payload.take_string();
         let topic_qos = payload.take_one_byte();
 
-        info!("filter {:?} :: qos {:?}", topic_filter, topic_qos);
+        info!("filter {} :: qos {}", topic_filter, topic_qos);
 
         topics.push((topic_filter, topic_qos));
     }
 
-    info!("Responding to packet id: {:?}", packet_identifier);
-    let mut response = vec![0b10010000, 2 + topics.len() as u8, (packet_identifier >> 8) as u8, packet_identifier as u8];
+    info!("Responding to packet id: {}", packet_identifier);
+    let mut response = vec![0b10010000, 2 + topics.len() as u8, (packet_identifier >> 8) as u8, packet_identifier as u8, ];
 
     for (_, topic_qos) in topics {
         response.push(topic_qos);
@@ -192,13 +162,13 @@ fn handle_subscribe(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
     Ok(Action::Respond(response))
 }
 
-fn handle_pingreq(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
+fn handle_pingreq(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     trace!("PINGREQ payload {:?}", payload);
 
     Ok(Action::Respond(vec![0b11010000, 0b00000000]))
 }
 
-fn handle_disconnect(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
+fn handle_disconnect(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     trace!("DISCONNECT payload {:?}", payload);
 
     Ok(Action::Disconnect)
@@ -208,31 +178,10 @@ fn handle_unknown(payload: &mut Vec<u8>) -> MQTTResult<Action> {
     panic!("Unknown payload: {:?}", payload)
 }
 
-fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
+pub fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
     (connect_flags >> pos) & 0b00000001 == 0b00000001
 }
 
-fn take_variable_length(stream: &mut Read) -> usize {
-    let mut multiplier: u32 = 1;
-    let mut value: u32 = 0;
-    let mut encoded_byte = [0];
-
-    loop {
-        let _ = stream.read_exact(&mut encoded_byte);
-        value += (encoded_byte[0] & 127) as u32 * multiplier;
-        multiplier *= 128;
-
-        if encoded_byte[0] & 128 == 0 {
-            break;
-        }
-
-        if multiplier > THRESHOLD {
-            panic!("malformed remaining length {:?}", multiplier);
-        }
-    }
-    info!("length: {:?}", value);
-    value as usize
-}
 
 fn main() {
     simple_logger::init().unwrap();
@@ -255,29 +204,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_take_two_bytes() {
-        assert_eq!(Payload::from(vec![0b00000000, 0b00000000]).take_two_bytes(), 0);
-    }
-
-    #[test]
-    fn test_take_one_byte() {
-        assert_eq!(Payload::from(vec![0b00000000]).take_one_byte(), 0);
-    }
-
-    #[test]
     fn test_is_flag_set() {
         assert!(is_flag_set(0b000000010, 1));
         assert!(is_flag_set(0b000000001, 0));
         assert!(is_flag_set(0b011111111, 0));
-    }
-
-    #[test]
-    fn test_length() {
-        assert_eq!(Payload::from(vec![0b00000000, 0b00000000]).take_length(), 0);
-        assert_eq!(Payload::from(vec![0b00000000, 0b00000001]).take_length(), 1);
-        assert_eq!(Payload::from(vec![0b00000001, 0b00000000]).take_length(), 256);
-        assert_eq!(Payload::from(vec![0b00000001, 0b00000001]).take_length(), 257);
-        assert_eq!(Payload::from(vec![0b00000001, 0b00000001, 1]).take_length(), 257);
     }
 
     #[test]
@@ -288,45 +218,25 @@ mod tests {
 
     #[test]
     fn test_parse_connect() {
-        let _expected_data = Action::Respond(vec![77, 81, 84, 84]);
-
-        assert!(matches!(handle_packet(&mut std::io::Cursor::new(vec![16, 15, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99])), Ok(_expected_data)));
+        match handle_packet(&mut std::io::Cursor::new(vec![16, 15, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
+            Ok(Action::Respond(data)) => assert_eq!(data, vec![32, 2, 0, 0]),
+            _ => assert!(false),
+        }
     }
 
     #[test]
-    #[ignore]
-    fn test_parse_publish_qos2() {
-        let _expected_data = Action::Continue;
-
-        assert!(matches!(handle_packet(&mut std::io::Cursor::new(vec![])), Ok(_expected_data)));
+    fn test_parse_publish_qos0() {
+        match handle_packet(&mut std::io::Cursor::new(vec![48, 14, 0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99])) {
+            Ok(Action::Continue) => assert!(true),
+            _ => assert!(false),
+        }
     }
 
     #[test]
-    #[ignore]
     fn test_parse_publish_qos1() {
-        let _expected_data = Action::Respond(vec![]);
-
-        assert!(matches!(handle_packet(&mut std::io::Cursor::new(vec![])), Ok(_expected_data)));
-    }
-
-    #[test]
-    fn test_take_variable_length() {
-        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0b00000000])), 0);
-        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x7F])), 127);
-
-        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x01])), 128);
-        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0x7F])), 16_383);
-
-        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x80, 0x01])), 16_384);
-        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0x7F])), 2_097_151);
-
-        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0x80, 0x80, 0x80, 0x01])), 2_097_152);
-        assert_eq!(take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x7F])), 268_435_455);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_take_variable_length_malformed() {
-        take_variable_length(&mut std::io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x8F]));
+        match handle_packet(&mut std::io::Cursor::new(vec![50, 14, 0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99])) {
+            Ok(Action::Respond(data)) => assert_eq!(data, vec![64, 2, 97, 98]),
+            _ => assert!(false),
+        }
     }
 }
