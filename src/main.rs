@@ -14,7 +14,7 @@ extern crate simple_logger;
 #[derive(Debug)]
 pub enum MQTTError {
     Io(io::Error),
-    Generic(&'static str),
+    Generic(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -71,12 +71,14 @@ fn handle_packet(mut stream: &mut io::Read) -> MQTTResult<Action> {
 fn handle_connect(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     trace!("CONNECT payload {:?}", payload);
 
-    if payload.take_string() != "MQTT" {
-        return Err(MQTTError::Generic("Invalid proto name"));
+    let proto_name = payload.take_string();
+    if proto_name != "MQTT" {
+        return Err(MQTTError::Generic(format!("Invalid proto name: {}", proto_name)));
     }
 
-    if payload.take_one_byte() != 4 {
-        return Err(MQTTError::Generic("Invalid version"));
+    let proto_level = payload.take_one_byte();
+    if proto_level != 4 {
+        return Err(MQTTError::Generic(format!("Invalid version: {}", proto_level)));
     }
 
     let connect_flags = payload.take_one_byte();
@@ -93,14 +95,13 @@ fn handle_connect(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
         info!("will: {:?}", _will);
     }
 
-    let _user_name = if is_flag_set(connect_flags, 7) { payload.take_string() } else { String::from("n/a") };
+    let username = if is_flag_set(connect_flags, 7) { payload.take_string() } else { String::from("n/a") };
+    let password = if is_flag_set(connect_flags, 6) { payload.take_string() } else { String::from("n/a") };
 
-    let password = if is_flag_set(connect_flags, 7) { payload.take_string() } else { String::from("n/a") };
+
+    info!("connected client_id: {}, username: {}, pwd: {}", client_id, username, password);
 
     debug_assert!(payload.is_empty());
-
-    info!("connected client_id: {}, username: {}, pwd: {}", client_id, _user_name, password);
-
     Ok(Action::Respond(vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]))
 }
 
@@ -118,6 +119,8 @@ fn handle_publish(payload: &mut Vec<u8>, flags: u8) -> MQTTResult<Action> {
         0 => {
             let msg = payload.take_payload();
             info!("publishing payload: {:?} on topic: {}", msg, topic_name);
+
+            debug_assert!(payload.is_empty());
             Ok(Action::Continue)
         }
         1 | 2 => {
@@ -125,9 +128,10 @@ fn handle_publish(payload: &mut Vec<u8>, flags: u8) -> MQTTResult<Action> {
             let msg = payload.take_payload();
             info!("publishing payload: {:?} on topic: {} in response to packet_id: {}", msg, topic_name, packet_identifier);
 
+            debug_assert!(payload.is_empty());
             Ok(Action::Respond(vec![0b0100_0000, 0b0000_0010, (packet_identifier >> 8) as u8, packet_identifier as u8, ]))
         }
-        _ => Err(MQTTError::Generic("Invalid QOS")),
+        other => Err(MQTTError::Generic(format!("Invalid QOS: {}", other))),
     }
 }
 
@@ -153,18 +157,21 @@ fn handle_subscribe(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
         response.push(topic_qos);
     }
 
+    debug_assert!(payload.is_empty());
     Ok(Action::Respond(response))
 }
 
 fn handle_pingreq(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     trace!("PINGREQ payload {:?}", payload);
 
+    debug_assert!(payload.is_empty());
     Ok(Action::Respond(vec![0b1101_0000, 0b0000_0000]))
 }
 
 fn handle_disconnect(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     trace!("DISCONNECT payload {:?}", payload);
 
+    debug_assert!(payload.is_empty());
     Ok(Action::Disconnect)
 }
 
@@ -215,6 +222,27 @@ mod tests {
         match handle_packet(&mut std::io::Cursor::new(vec![16, 15, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
             Ok(Action::Respond(data)) => assert_eq!(data, vec![32, 2, 0, 0]),
             _ => assert!(false),
+        }
+
+        match handle_packet(&mut std::io::Cursor::new(vec![16, 35, 0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100])) {
+            Ok(Action::Respond(data)) => assert_eq!(data, vec![32, 2, 0, 0]),
+            _ => assert!(false),
+        }
+    }
+
+    #[test]
+    fn test_parse_connect_invalid_proto() {
+        match handle_packet(&mut std::io::Cursor::new(vec![16, 15, 0, 4, 97, 98, 99, 100, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
+            Err(MQTTError::Generic(msg)) => assert_eq!(msg, "Invalid proto name: abcd"),
+            _ => assert!(false)
+        }
+    }
+
+    #[test]
+    fn test_parse_connect_invalid_version() {
+        match handle_packet(&mut std::io::Cursor::new(vec![16, 15, 0, 4, 77, 81, 84, 84, 1, 2, 0, 60, 0, 3, 97, 98, 99])) {
+            Err(MQTTError::Generic(msg)) => assert_eq!(msg, "Invalid version: 1"),
+            _ => assert!(false)
         }
     }
 
