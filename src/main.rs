@@ -12,7 +12,7 @@ static THRESHOLD: u32 = 128 * 128 * 128;
 #[derive(Debug)]
 enum MQTTError {
     Io(std::io::Error),
-    Error(),
+    Error(&'static str),
 }
 
 type MQTTResult<T> = result::Result<T, MQTTError>;
@@ -102,11 +102,11 @@ fn handle_connect(payload: &mut Payload, _flags: u8) -> MQTTResult<Action> {
     trace!("CONNECT payload {:?}", payload);
 
     if payload.take_string() != "MQTT" {
-        return Err(MQTTError::Error());
+        return Err(MQTTError::Error("Invalid proto name"));
     }
 
     if payload.take_one_byte() != 4 {
-        return Err(MQTTError::Error());
+        return Err(MQTTError::Error("Invalid version"));
     }
 
     let connect_flags = payload.take_one_byte();
