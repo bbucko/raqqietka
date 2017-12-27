@@ -24,7 +24,6 @@ pub enum Action {
     Disconnect,
 }
 
-
 pub type MQTTResult<T> = result::Result<T, MQTTError>;
 
 fn handle_client(stream: &mut net::TcpStream) -> MQTTResult<()> {
@@ -87,17 +86,16 @@ fn handle_connect(payload: &mut Vec<u8>, _flags: u8) -> MQTTResult<Action> {
     let client_id = payload.take_string();
 
     if is_flag_set(connect_flags, 2) {
-        let _will = (
+        let will = (
             payload.take_string(),
             payload.take_string(),
             (connect_flags & 0b0001_1000) >> 4,
         );
-        info!("will: {:?}", _will);
+        info!("will: {:?}", will);
     }
 
     let username = if is_flag_set(connect_flags, 7) { payload.take_string() } else { String::from("n/a") };
     let password = if is_flag_set(connect_flags, 6) { payload.take_string() } else { String::from("n/a") };
-
 
     info!("connected client_id: {}, username: {}, pwd: {}", client_id, username, password);
 
@@ -183,7 +181,6 @@ pub fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
     (connect_flags >> pos) & 0b0000_0001 == 0b0000_0001
 }
 
-
 fn main() {
     simple_logger::init().unwrap();
 
@@ -192,11 +189,13 @@ fn main() {
         for stream_result in listener.incoming() {
             thread::spawn(move || {
                 let mut stream = stream_result.unwrap();
-                let _ = handle_client(&mut stream);
+                if let Err(e) = handle_client(&mut stream) {
+                    error!("Error occurred in handle_client: {:?}", e);
+                }
             });
         }
     } else {
-        error!("Couldn't create a listener on port 8080");
+        panic!("Couldn't create a listener on port 8080");
     }
 }
 
