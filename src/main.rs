@@ -11,6 +11,10 @@ use std::result;
 extern crate log;
 extern crate simple_logger;
 
+#[cfg(test)]
+#[macro_use]
+extern crate matches;
+
 #[derive(Debug)]
 pub enum MQTTError {
     Io(io::Error),
@@ -44,16 +48,13 @@ fn handle_client(stream: &mut net::TcpStream) -> MQTTResult<()> {
 }
 
 fn handle_packet(mut stream: &mut io::Read) -> MQTTResult<Action> {
-    let mut buf = [0];
-    stream.read_exact(&mut buf).map_err(MQTTError::Io)?;
-
-    let fixed_header = buf[0];
+    let fixed_header = stream.take_one_byte().map_err(MQTTError::Io)?;
 
     let packet_type = fixed_header >> 4;
     let flags = fixed_header & 0b0000_1111;
 
     info!("header: {:08b} packet_type: {} flags: {:08b}", fixed_header, packet_type, flags);
-    let remaining_length = stream.take_variable_length();
+    let remaining_length = stream.take_variable_length().map_err(MQTTError::Io)?;
     let mut payload = vec![0; remaining_length];
     stream.read_exact(&mut payload).map_err(MQTTError::Io)?;
 
@@ -213,7 +214,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_unknown_packet() {
-        let _ = handle_packet(&mut std::io::Cursor::new(vec![0b0000_0000]));
+        let _ = handle_packet(&mut std::io::Cursor::new(vec![0b0000_0000, 0b0000_0000, 0b0000_0000, 0b0000_0000, 0b0000_0000]));
     }
 
     #[test]

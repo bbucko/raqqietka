@@ -1,23 +1,25 @@
 use std::io;
 use std::string;
 
+
 static THRESHOLD: u32 = 128 * 128 * 128;
 
 pub trait MQTTRead {
-    fn take_variable_length(&mut self) -> usize;
+    fn take_variable_length(&mut self) -> Result<usize, io::Error>;
+    fn take_one_byte(&mut self) -> Result<u8, io::Error>;
 }
 
 impl<T> MQTTRead for T
     where
         T: io::Read,
 {
-    fn take_variable_length(&mut self) -> usize {
+    fn take_variable_length(&mut self) -> Result<usize, io::Error> {
         let mut multiplier: u32 = 1;
         let mut value: u32 = 0;
         let mut encoded_byte = [0];
 
         loop {
-            let _ = self.read_exact(&mut encoded_byte);
+            let _ = self.read_exact(&mut encoded_byte)?;
             value += u32::from(encoded_byte[0] & 127) * multiplier;
             multiplier *= 128;
 
@@ -27,7 +29,14 @@ impl<T> MQTTRead for T
 
             assert!(multiplier <= THRESHOLD, "malformed remaining length {}", multiplier);
         }
-        value as usize
+        Ok(value as usize)
+    }
+
+    fn take_one_byte(&mut self) -> Result<u8, io::Error> {
+        let mut buf = [0];
+        let _ = self.read_exact(&mut buf)?;
+
+        Ok(buf[0])
     }
 }
 
@@ -71,24 +80,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_take_one_byte_from_read() {
+        assert_matches!(io::Cursor::new(vec![0b00000000]).take_one_byte(), Ok(0));
+        assert_matches!(io::Cursor::new(vec![0x7F]).take_variable_length(), Ok(127));
+    }
+
+    #[test]
     fn test_take_variable_length() {
-        assert_eq!(io::Cursor::new(vec![0b00000000]).take_variable_length(), 0);
-        assert_eq!(io::Cursor::new(vec![0x7F]).take_variable_length(), 127);
+        assert_matches!(io::Cursor::new(vec![0b00000000]).take_variable_length(), Ok(0));
+        assert_matches!(io::Cursor::new(vec![0x7F]).take_variable_length(), Ok(127));
 
-        assert_eq!(io::Cursor::new(vec![0x80, 0x01]).take_variable_length(), 128);
-        assert_eq!(io::Cursor::new(vec![0xFF, 0x7F]).take_variable_length(), 16_383);
+        assert_matches!(io::Cursor::new(vec![0x80, 0x01]).take_variable_length(), Ok(128));
+        assert_matches!(io::Cursor::new(vec![0xFF, 0x7F]).take_variable_length(), Ok(16_383));
 
-        assert_eq!(io::Cursor::new(vec![0x80, 0x80, 0x01]).take_variable_length(), 16_384);
-        assert_eq!(io::Cursor::new(vec![0xFF, 0xFF, 0x7F]).take_variable_length(), 2_097_151);
+        assert_matches!(io::Cursor::new(vec![0x80, 0x80, 0x01]).take_variable_length(), Ok(16_384));
+        assert_matches!(io::Cursor::new(vec![0xFF, 0xFF, 0x7F]).take_variable_length(), Ok(2_097_151));
 
-        assert_eq!(io::Cursor::new(vec![0x80, 0x80, 0x80, 0x01]).take_variable_length(), 2_097_152);
-        assert_eq!(io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x7F]).take_variable_length(), 268_435_455);
+        assert_matches!(io::Cursor::new(vec![0x80, 0x80, 0x80, 0x01]).take_variable_length(), Ok(2_097_152));
+        assert_matches!(io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x7F]).take_variable_length(), Ok(268_435_455));
     }
 
     #[test]
     #[should_panic]
     fn test_take_variable_length_malformed() {
-        io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x8F]).take_variable_length();
+        let _ = io::Cursor::new(vec![0xFF, 0xFF, 0xFF, 0x8F]).take_variable_length();
     }
 
     #[test]
