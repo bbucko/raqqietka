@@ -25,23 +25,25 @@ pub fn connect(payload: &mut BytesMut) -> Result {
 
     let client_id = take_string(payload);
 
-
     let will = if is_flag_set(connect_flags, 2) {
         Some((take_string(payload), take_string(payload), (connect_flags & 0b0001_1000) >> 4))
     } else {
         None
     };
 
-
-    let username = if is_flag_set(connect_flags, 7) { Some(take_string(payload)) } else { None };
-    let password = if is_flag_set(connect_flags, 6) { Some(take_string(payload)) } else { None };
+    let username = if is_flag_set(connect_flags, 7) {
+        Some(take_string(payload))
+    } else {
+        None
+    };
+    let password = if is_flag_set(connect_flags, 6) {
+        Some(take_string(payload))
+    } else {
+        None
+    };
 
     info!("connected client_id: {:?}, username: {:?}, pwd: {:?}", client_id, username, password);
     Ok(Some(super::MQTTRequest::connect(client_id, username, password, will)))
-}
-
-pub fn unknown(payload: &mut BytesMut) -> Result {
-    panic!("Unknown payload: {:?}", payload)
 }
 
 pub fn publish(payload: &mut BytesMut, flags: u8) -> Result {
@@ -60,7 +62,7 @@ pub fn publish(payload: &mut BytesMut, flags: u8) -> Result {
             info!("publishing payload: {:?} on topic: '{}'", msg, topic_name);
 
             assert!(payload.is_empty(), "payload: {:?}", payload);
-            Ok(None)
+            Ok(Some(super::MQTTRequest::publish(topic_name, qos_level, msg)))
         }
         1 | 2 => {
             let packet_identifier = take_two_bytes(payload);
@@ -68,8 +70,7 @@ pub fn publish(payload: &mut BytesMut, flags: u8) -> Result {
             info!("publishing payload: {:?} on topic: '{}' in response to packet_id: {}", msg, topic_name, packet_identifier);
 
             assert!(payload.is_empty(), "payload: {:?}", payload);
-            Ok(Some(super::MQTTRequest::publish()))
-//            Ok(Some(vec![0b0100_0000, 0b0000_0010, (packet_identifier >> 8) as u8, packet_identifier as u8, ]))
+            Ok(Some(super::MQTTRequest::publish_with_response(packet_identifier, topic_name, qos_level, msg)))
         }
         _ => Err(io::Error::new(io::ErrorKind::Other, "invalid qos"))
     }
@@ -91,21 +92,15 @@ pub fn subscribe(payload: &mut BytesMut) -> Result {
     }
 
     info!("Responding to packet id: {}", packet_identifier);
-    let mut response = vec![0b1001_0000, 2 + topics.len() as u8, (packet_identifier >> 8) as u8, packet_identifier as u8, ];
-
-    for (_, topic_qos) in topics {
-        response.push(topic_qos);
-    }
 
     assert!(payload.is_empty(), "payload: {:?}", payload);
-    Ok(Some(super::MQTTRequest::subscribe()))
+    Ok(Some(super::MQTTRequest::subscribe(packet_identifier, topics)))
 }
 
 pub fn pingreq(payload: &mut BytesMut) -> Result {
     trace!("PINGREQ payload {:?}", payload);
 
     assert_eq!(payload.len(), 0);
-//    Ok(Some(vec![0b1101_0000, 0b0000_0000]))
     Ok(Some(super::MQTTRequest::pingreq()))
 }
 
@@ -113,8 +108,11 @@ pub fn disconnect(payload: &mut BytesMut) -> Result {
     trace!("DISCONNECT payload {:?}", payload);
 
     assert_eq!(payload.len(), 0);
-//    Ok(Action::Disconnect)
     Ok(Some(super::MQTTRequest::disconnect()))
+}
+
+pub fn unknown(payload: &mut BytesMut) -> Result {
+    panic!("Unknown payload: {:?}", payload)
 }
 
 fn take_string(payload: &mut BytesMut) -> string::String {
@@ -190,7 +188,7 @@ mod tests {
     #[test]
     fn test_parse_publish_qos0() {
         match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99]), 0b00000000) {
-            Ok(None) => assert!(true),
+            Ok(Some(MQTTRequest { packet: Type::PUBLISH })) => assert_eq!(true, true),
             _ => assert!(false),
         }
     }
