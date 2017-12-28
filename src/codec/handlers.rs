@@ -1,19 +1,11 @@
 use std::io;
-use std::result;
 use std::string;
+use std::result;
 use bytes::BytesMut;
 
-pub struct ParsedPacket {}
 
-impl ParsedPacket {
-    fn connect() -> ParsedPacket {
-        ParsedPacket {}
-    }
-}
-
-type Item = ParsedPacket;
-type Error = io::Error;
-type Result = result::Result<Option<Item>, Error>;
+pub type Error = io::Error;
+pub type Result = result::Result<Option<super::MQTTRequest>, Error>;
 
 pub fn connect(payload: &mut BytesMut) -> Result {
     trace!("CONNECT payload {:?}", payload);
@@ -33,20 +25,19 @@ pub fn connect(payload: &mut BytesMut) -> Result {
 
     let client_id = take_string(payload);
 
-    if is_flag_set(connect_flags, 2) {
-        let will = (
-            take_string(payload),
-            take_string(payload),
-            (connect_flags & 0b0001_1000) >> 4,
-        );
-        info!("will: {:?}", will);
-    }
 
-    let username = if is_flag_set(connect_flags, 7) { take_string(payload) } else { String::from("n/a") };
-    let password = if is_flag_set(connect_flags, 6) { take_string(payload) } else { String::from("n/a") };
+    let will = if is_flag_set(connect_flags, 2) {
+        Some((take_string(payload), take_string(payload), (connect_flags & 0b0001_1000) >> 4))
+    } else {
+        None
+    };
 
-    info!("connected client_id: {}, username: {}, pwd: {}", client_id, username, password);
-    Ok(Some(ParsedPacket::connect()))
+
+    let username = if is_flag_set(connect_flags, 7) { Some(take_string(payload)) } else { None };
+    let password = if is_flag_set(connect_flags, 6) { Some(take_string(payload)) } else { None };
+
+    info!("connected client_id: {:?}, username: {:?}, pwd: {:?}", client_id, username, password);
+    Ok(Some(super::MQTTRequest::connect(client_id, username, password, will)))
 }
 
 pub fn unknown(payload: &mut BytesMut) -> Result {
@@ -77,7 +68,7 @@ pub fn publish(payload: &mut BytesMut, flags: u8) -> Result {
             info!("publishing payload: {:?} on topic: '{}' in response to packet_id: {}", msg, topic_name, packet_identifier);
 
             assert!(payload.is_empty(), "payload: {:?}", payload);
-            Ok(Some(ParsedPacket::connect()))
+            Ok(Some(super::MQTTRequest::publish()))
 //            Ok(Some(vec![0b0100_0000, 0b0000_0010, (packet_identifier >> 8) as u8, packet_identifier as u8, ]))
         }
         _ => Err(io::Error::new(io::ErrorKind::Other, "invalid qos"))
@@ -107,8 +98,7 @@ pub fn subscribe(payload: &mut BytesMut) -> Result {
     }
 
     assert!(payload.is_empty(), "payload: {:?}", payload);
-    Ok(Some(ParsedPacket::connect()))
-//    Ok(Some(response))
+    Ok(Some(super::MQTTRequest::subscribe()))
 }
 
 pub fn pingreq(payload: &mut BytesMut) -> Result {
@@ -116,7 +106,7 @@ pub fn pingreq(payload: &mut BytesMut) -> Result {
 
     assert_eq!(payload.len(), 0);
 //    Ok(Some(vec![0b1101_0000, 0b0000_0000]))
-    Ok(Some(ParsedPacket::connect()))
+    Ok(Some(super::MQTTRequest::pingreq()))
 }
 
 pub fn disconnect(payload: &mut BytesMut) -> Result {
@@ -124,7 +114,7 @@ pub fn disconnect(payload: &mut BytesMut) -> Result {
 
     assert_eq!(payload.len(), 0);
 //    Ok(Action::Disconnect)
-    Ok(Some(ParsedPacket::connect()))
+    Ok(Some(super::MQTTRequest::disconnect()))
 }
 
 fn take_string(payload: &mut BytesMut) -> string::String {
@@ -159,24 +149,24 @@ fn take_payload(payload: &mut BytesMut) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::*;
 
     #[test]
-    fn test_is_flag_set() {
-        assert!(is_flag_set(0b0000_00010, 1));
-        assert!(is_flag_set(0b0000_00001, 0));
-        assert!(is_flag_set(0b0111_11111, 0));
+    fn test_parse_connect_with_client_id_only() {
+        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
+            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, None, None, None) })) => assert_eq!(client_id, "abc"),
+            _ => assert!(false),
+        }
     }
 
     #[test]
-    fn test_parse_connect() {
-        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
-            Ok(Some(ParsedPacket {})) => assert_eq!(true, true),
-            _ => assert!(false),
-        }
-
+    fn test_parse_connect_with_client_id_and_username_and_password() {
         match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100])) {
-//            Ok(Some(data)) => assert_eq!(data, vec![32, 2, 0, 0]),
-            Ok(Some(ParsedPacket {})) => assert_eq!(true, true),
+            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, Some(a), Some(b), None) })) => {
+                assert_eq!(client_id, "abc");
+                assert_eq!(a, "username");
+                assert_eq!(b, "password");
+            }
             _ => assert!(false),
         }
     }
@@ -208,10 +198,16 @@ mod tests {
     #[test]
     fn test_parse_publish_qos1() {
         match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99]), 0b00000010) {
-            Ok(Some(ParsedPacket {})) => assert_eq!(true, true),
-//            Ok(Some(data)) => assert_eq!(data, vec![64, 2, 97, 98]),
+            Ok(Some(MQTTRequest { packet: Type::PUBLISH })) => assert_eq!(true, true),
             _ => assert!(false),
         }
+    }
+
+    #[test]
+    fn test_is_flag_set() {
+        assert!(is_flag_set(0b0000_00010, 1));
+        assert!(is_flag_set(0b0000_00001, 0));
+        assert!(is_flag_set(0b0111_11111, 0));
     }
 
     #[test]

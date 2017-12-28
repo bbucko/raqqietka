@@ -1,6 +1,7 @@
 mod handlers;
 
 use std::io;
+use std::result;
 use bytes::BytesMut;
 use tokio_io::codec::{Decoder, Encoder};
 
@@ -8,11 +9,46 @@ static THRESHOLD: u32 = 128 * 128 * 128;
 
 pub struct MQTTCodec;
 
+#[derive(Debug)]
+pub enum Type {
+    CONNECT(String, Option<String>, Option<String>, Option<(String, String, u8)>),
+    PUBLISH,
+    SUBSCRIBE,
+    PINGREQ,
+    DISCONNECT,
+}
+
+#[derive(Debug)]
+pub struct MQTTRequest {
+    packet: Type,
+}
+
+impl MQTTRequest {
+    fn connect(client_id: String, username: Option<String>, password: Option<String>, will: Option<(String, String, u8)>) -> MQTTRequest {
+        MQTTRequest { packet: Type::CONNECT(client_id, username, password, will) }
+    }
+    fn publish() -> MQTTRequest {
+        MQTTRequest { packet: Type::PUBLISH }
+    }
+    fn subscribe() -> MQTTRequest {
+        MQTTRequest { packet: Type::SUBSCRIBE }
+    }
+    fn pingreq() -> MQTTRequest {
+        MQTTRequest { packet: Type::PINGREQ }
+    }
+    fn disconnect() -> MQTTRequest {
+        MQTTRequest { packet: Type::DISCONNECT }
+    }
+}
+
+#[derive(Debug)]
+pub struct MQTTResponse {}
+
 impl Decoder for MQTTCodec {
-    type Item = String;
+    type Item = MQTTRequest;
     type Error = io::Error;
 
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+    fn decode(&mut self, src: &mut BytesMut) -> result::Result<Option<Self::Item>, Self::Error> {
         if src.len() < 2 {
             return Ok(None);
         }
@@ -27,16 +63,14 @@ impl Decoder for MQTTCodec {
 
                 info!("packet_type: {:08b}, flags: {:08b}, payload: {:?}", packet_type, flags, payload);
 
-                let _ = match packet_type {
+                match packet_type {
                     1 => handlers::connect(&mut payload),
                     3 => handlers::publish(&mut payload, flags),
                     8 => handlers::subscribe(&mut payload),
                     12 => handlers::pingreq(&mut payload),
                     14 => handlers::disconnect(&mut payload),
                     _ => handlers::unknown(&mut payload),
-                };
-
-                Ok(Some("CONNECT".to_string()))
+                }
             }
             None => Ok(None)
         }
@@ -44,10 +78,10 @@ impl Decoder for MQTTCodec {
 }
 
 impl Encoder for MQTTCodec {
-    type Item = String;
+    type Item = MQTTResponse;
     type Error = io::Error;
 
-    fn encode(&mut self, _item: Self::Item, _dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, _item: Self::Item, _dst: &mut BytesMut) -> result::Result<(), Self::Error> {
         Ok(())
     }
 }

@@ -9,6 +9,9 @@ extern crate tokio_io;
 extern crate tokio_proto;
 extern crate tokio_service;
 
+#[cfg(test)]
+extern crate matches;
+
 use std::io;
 use futures::{future, Future};
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -21,10 +24,10 @@ pub struct MQTTProto;
 
 impl<T: AsyncRead + AsyncWrite + 'static> ServerProto<T> for MQTTProto {
     // For this protocol style, `Request` matches the `Item` type of the codec's `Decoder`
-    type Request = String;
+    type Request = codec::MQTTRequest;
 
     // For this protocol style, `Response` matches the `Item` type of the codec's `Encoder`
-    type Response = String;
+    type Response = codec::MQTTResponse;
 
     // A bit of boilerplate to hook in the codec:
     type Transport = Framed<T, codec::MQTTCodec>;
@@ -38,8 +41,8 @@ pub struct MQTT;
 
 impl Service for MQTT {
     // These types must match the corresponding protocol types:
-    type Request = String;
-    type Response = String;
+    type Request = codec::MQTTRequest;
+    type Response = codec::MQTTResponse;
 
     // For non-streaming protocols, service errors are always io::Error
     type Error = io::Error;
@@ -50,10 +53,12 @@ impl Service for MQTT {
     // Produce a future for computing a response from a request.
     fn call(&self, req: Self::Request) -> Self::Future {
         // In this case, the response is immediate.
-        Box::new(future::ok(req))
+        info!("Request: {:?}", req);
+        let response = Box::new(future::ok(codec::MQTTResponse {}));
+        info!("Response: {:?}", response);
+        response
     }
 }
-
 
 fn main() {
     info!("raqqietka starting");
