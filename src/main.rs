@@ -13,12 +13,27 @@ extern crate tokio_service;
 extern crate matches;
 
 use std::io;
-use futures::{future, Future};
+use futures::{future, Future, Stream, Poll, Async};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::Framed;
 use tokio_proto::pipeline::ServerProto;
 use tokio_proto::TcpServer;
 use tokio_service::Service;
+
+pub struct MQTTStream;
+
+impl Stream for MQTTStream {
+    // The type of item yielded each time the stream's event occurs
+    type Item = codec::MQTTRequest;
+
+    // The error type; errors terminate the stream.
+    type Error = io::Error;
+
+    // Try to produce a value.
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        Ok(Async::NotReady)
+    }
+}
 
 pub struct MQTTProto;
 

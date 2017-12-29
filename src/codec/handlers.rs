@@ -62,7 +62,7 @@ pub fn publish(payload: &mut BytesMut, flags: u8) -> Result {
             info!("publishing payload: {:?} on topic: '{}'", msg, topic_name);
 
             assert!(payload.is_empty(), "payload: {:?}", payload);
-            Ok(Some(super::MQTTRequest::publish(topic_name, qos_level, msg)))
+            Ok(Some(super::MQTTRequest::publish(None, topic_name, qos_level, msg)))
         }
         1 | 2 => {
             let packet_identifier = take_two_bytes(payload);
@@ -70,7 +70,7 @@ pub fn publish(payload: &mut BytesMut, flags: u8) -> Result {
             info!("publishing payload: {:?} on topic: '{}' in response to packet_id: {}", msg, topic_name, packet_identifier);
 
             assert!(payload.is_empty(), "payload: {:?}", payload);
-            Ok(Some(super::MQTTRequest::publish_with_response(packet_identifier, topic_name, qos_level, msg)))
+            Ok(Some(super::MQTTRequest::publish(Some(packet_identifier), topic_name, qos_level, msg)))
         }
         _ => Err(io::Error::new(io::ErrorKind::Other, "invalid qos"))
     }
@@ -132,7 +132,7 @@ fn take_one_byte(payload: &mut BytesMut) -> u8 {
 
 fn take_two_bytes(payload: &mut BytesMut) -> u16 {
     let bytes = payload.split_to(2);
-    ((bytes[0] as u16) << 8) | (bytes[1] as u16)
+    (u16::from(bytes[0]) << 8) | u16::from(bytes[1])
 }
 
 fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
@@ -188,15 +188,24 @@ mod tests {
     #[test]
     fn test_parse_publish_qos0() {
         match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99]), 0b00000000) {
-            Ok(Some(MQTTRequest { packet: Type::PUBLISH })) => assert_eq!(true, true),
+            Ok(Some(MQTTRequest { packet: Type::PUBLISH(None, topic, qos_level, payload) })) => {
+                assert_eq!(topic, "/something");
+                assert_eq!(qos_level, 0);
+                assert_eq!(payload, Vec::from("abc"));
+            }
             _ => assert!(false),
         }
     }
 
     #[test]
     fn test_parse_publish_qos1() {
-        match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99]), 0b00000010) {
-            Ok(Some(MQTTRequest { packet: Type::PUBLISH })) => assert_eq!(true, true),
+        match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99]), 0b00000010) {
+            Ok(Some(MQTTRequest { packet: Type::PUBLISH(Some(packet_id), topic, qos_level, payload) })) => {
+                assert_eq!(packet_id, 1);
+                assert_eq!(topic, "/something");
+                assert_eq!(qos_level, 1);
+                assert_eq!(payload, vec![97, 98, 99]);
+            }
             _ => assert!(false),
         }
     }

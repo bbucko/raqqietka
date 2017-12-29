@@ -12,7 +12,7 @@ pub struct MQTTCodec;
 #[derive(Debug)]
 pub enum Type {
     CONNECT(String, Option<String>, Option<String>, Option<(String, String, u8)>),
-    PUBLISH,
+    PUBLISH(Option<u16>, String, u8, Vec<u8>),
     SUBSCRIBE(u16, Vec<(String, u8)>),
     PINGREQ,
     DISCONNECT,
@@ -27,12 +27,10 @@ impl MQTTRequest {
     fn connect(client_id: String, username: Option<String>, password: Option<String>, will: Option<(String, String, u8)>) -> MQTTRequest {
         MQTTRequest { packet: Type::CONNECT(client_id, username, password, will) }
     }
-    fn publish(topic: String, qos_level: u8, payload: Vec<u8>) -> MQTTRequest {
-        MQTTRequest { packet: Type::PUBLISH }
+    fn publish(packet_identifier: Option<u16>, topic: String, qos_level: u8, payload: Vec<u8>) -> MQTTRequest {
+        MQTTRequest { packet: Type::PUBLISH(packet_identifier, topic, qos_level, payload) }
     }
-    fn publish_with_response(packet_identifier: u16, topic: String, qos_level: u8, payload: Vec<u8>) -> MQTTRequest {
-        MQTTRequest { packet: Type::PUBLISH }
-    }
+
     fn subscribe(packet_identifier: u16, topics: Vec<(String, u8)>) -> MQTTRequest {
         MQTTRequest { packet: Type::SUBSCRIBE(packet_identifier, topics) }
     }
