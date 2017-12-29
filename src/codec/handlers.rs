@@ -111,10 +111,6 @@ pub fn disconnect(payload: &mut BytesMut) -> Result {
     Ok(Some(super::MQTTRequest::disconnect()))
 }
 
-pub fn unknown(payload: &mut BytesMut) -> Result {
-    panic!("Unknown payload: {:?}", payload)
-}
-
 fn take_string(payload: &mut BytesMut) -> string::String {
     let length = take_length(payload);
     let proto_name = payload.split_to(length).to_vec();

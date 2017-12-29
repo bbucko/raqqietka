@@ -6,7 +6,6 @@ extern crate simple_logger;
 extern crate bytes;
 extern crate futures;
 extern crate tokio_io;
-extern crate tokio_proto;
 extern crate tokio_service;
 extern crate tokio_core;
 
@@ -14,34 +13,23 @@ extern crate tokio_core;
 extern crate matches;
 
 use std::io;
+use std::rc;
+use std::net;
+use std::collections;
+use std::cell;
 use tokio_io::AsyncRead;
 use tokio_core::net::TcpListener;
 use tokio_core::reactor::Core;
 use tokio_service::{Service, NewService};
-use futures::{future, Future, Stream, Sink};
+use futures::{Future, Stream, Sink};
+
+struct Client;
+
+struct ConnectedClients(rc::Rc<cell::RefCell<collections::HashMap<net::SocketAddr, Client>>>);
 
 pub struct MQTT;
 
-impl Service for MQTT {
-    // These types must match the corresponding protocol types:
-    type Request = codec::MQTTRequest;
-    type Response = codec::MQTTResponse;
-
-    // For non-streaming protocols, service errors are always io::Error
-    type Error = io::Error;
-
-    // The future for computing the response; box it for simplicity.
-    type Future = Box<Future<Item=Self::Response, Error=Self::Error>>;
-
-    // Produce a future for computing a response from a request.
-    fn call(&self, req: Self::Request) -> Self::Future {
-        // In this case, the response is immediate.
-        info!("Request: {:?}", req);
-        let response = Box::new(future::ok(codec::MQTTResponse {}));
-        info!("Response: {:?}", response);
-        response
-    }
-}
+pub struct MQTTCodec;
 
 fn main() {
     simple_logger::init_with_level(log::LogLevel::Info).unwrap();
@@ -60,13 +48,18 @@ fn serve<S>(s: S) -> io::Result<()> where S: NewService<Request=codec::MQTTReque
     let listener = TcpListener::bind(&addr, &handle)?;
 
     let connections = listener.incoming();
-    let server = connections.for_each(move |(socket, _peer_addr)| {
-        let (writer, reader) = socket.framed(codec::MQTTCodec::new()).split();
+    let server = connections.for_each(move |(socket, addr)| {
+        let (writer, reader) = socket.framed(MQTTCodec::new()).split();
+
         let service = s.new_service()?;
 
         let responses = reader.and_then(move |req| service.call(req));
         let server = writer.send_all(responses)
-            .then(|_| Ok(()));
+            .then(move |_| {
+                info!("Client {:?} disconnected", addr);
+                Ok(())
+            });
+
         handle.spawn(server);
 
         Ok(())

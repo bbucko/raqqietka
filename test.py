@@ -22,9 +22,11 @@ def on_log(client, userdata, level, buf):
     print("LOG: " + buf)
 
 
-def sleep_and_send():
-    time.sleep(1)
+def send_and_sleep():
     client.loop()
+    client.loop()
+    client.loop()
+    time.sleep(1)
 
 
 client = mqtt.Client(client_id="abc")
@@ -37,25 +39,25 @@ client.username_pw_set("username", "password")
 client.will_set("/will/topic", "will message", 0)
 
 client.connect("localhost", 1883, 60)
-sleep_and_send()
+send_and_sleep()
 
 client.subscribe("/something", 0)
-sleep_and_send()
+send_and_sleep()
 
 client.subscribe("/something/else", 1)
-sleep_and_send()
+send_and_sleep()
 
 client.subscribe([("/qos", 0), ("/something/else", 1)])
-sleep_and_send()
+send_and_sleep()
 
 client.publish("/something", "abc", 0)
-sleep_and_send()
+send_and_sleep()
 
 client.publish("/something/else", "abc", 1)
-sleep_and_send()
+send_and_sleep()
 
 client.publish("/something/else", "abc", 1, True)
-sleep_and_send()
+send_and_sleep()
 
 client.disconnect()
-client.loop()
+send_and_sleep()
