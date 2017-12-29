@@ -7,8 +7,6 @@ use tokio_io::codec::{Decoder, Encoder};
 
 static THRESHOLD: u32 = 128 * 128 * 128;
 
-pub struct MQTTCodec;
-
 #[derive(Debug)]
 pub enum Type {
     CONNECT(String, Option<String>, Option<String>, Option<(String, String, u8)>),
@@ -20,7 +18,7 @@ pub enum Type {
 
 #[derive(Debug)]
 pub struct MQTTRequest {
-    packet: Type,
+    pub packet: Type,
 }
 
 impl MQTTRequest {
@@ -44,6 +42,9 @@ impl MQTTRequest {
 
 #[derive(Debug)]
 pub struct MQTTResponse {}
+
+#[derive(Debug)]
+pub struct MQTTCodec;
 
 impl Decoder for MQTTCodec {
     type Item = MQTTRequest;
@@ -84,6 +85,12 @@ impl Encoder for MQTTCodec {
 
     fn encode(&mut self, _item: Self::Item, _dst: &mut BytesMut) -> result::Result<(), Self::Error> {
         Ok(())
+    }
+}
+
+impl MQTTCodec {
+    pub fn new() -> MQTTCodec {
+        MQTTCodec {}
     }
 }
 

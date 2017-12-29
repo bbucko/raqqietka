@@ -8,49 +8,17 @@ extern crate futures;
 extern crate tokio_io;
 extern crate tokio_proto;
 extern crate tokio_service;
+extern crate tokio_core;
 
 #[cfg(test)]
 extern crate matches;
 
 use std::io;
-use futures::{future, Future, Stream, Poll, Async};
-use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_io::codec::Framed;
-use tokio_proto::pipeline::ServerProto;
-use tokio_proto::TcpServer;
-use tokio_service::Service;
-
-pub struct MQTTStream;
-
-impl Stream for MQTTStream {
-    // The type of item yielded each time the stream's event occurs
-    type Item = codec::MQTTRequest;
-
-    // The error type; errors terminate the stream.
-    type Error = io::Error;
-
-    // Try to produce a value.
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        Ok(Async::NotReady)
-    }
-}
-
-pub struct MQTTProto;
-
-impl<T: AsyncRead + AsyncWrite + 'static> ServerProto<T> for MQTTProto {
-    // For this protocol style, `Request` matches the `Item` type of the codec's `Decoder`
-    type Request = codec::MQTTRequest;
-
-    // For this protocol style, `Response` matches the `Item` type of the codec's `Encoder`
-    type Response = codec::MQTTResponse;
-
-    // A bit of boilerplate to hook in the codec:
-    type Transport = Framed<T, codec::MQTTCodec>;
-    type BindTransport = Result<Self::Transport, io::Error>;
-    fn bind_transport(&self, io: T) -> Self::BindTransport {
-        Ok(io.framed(codec::MQTTCodec))
-    }
-}
+use tokio_io::AsyncRead;
+use tokio_core::net::TcpListener;
+use tokio_core::reactor::Core;
+use tokio_service::{Service, NewService};
+use futures::{future, Future, Stream, Sink};
 
 pub struct MQTT;
 
@@ -76,15 +44,37 @@ impl Service for MQTT {
 }
 
 fn main() {
-    info!("raqqietka starting");
     simple_logger::init_with_level(log::LogLevel::Info).unwrap();
+    info!("raqqietka starting");
+
+    if let Err(e) = serve(|| Ok(MQTT)) {
+        println!("Server failed with {}", e);
+    }
+}
+
+fn serve<S>(s: S) -> io::Result<()> where S: NewService<Request=codec::MQTTRequest, Response=codec::MQTTResponse, Error=io::Error> + 'static {
+    let mut core = Core::new()?;
+    let handle = core.handle();
 
     let addr = "127.0.0.1:1883".parse().unwrap();
+    let listener = TcpListener::bind(&addr, &handle)?;
 
-    // The builder requires a protocol and an address
-    let server = TcpServer::new(MQTTProto, addr);
+    let connections = listener.incoming();
+    let server = connections.for_each(move |(socket, _peer_addr)| {
+        let (writer, reader) = socket.framed(codec::MQTTCodec::new()).split();
+        let service = s.new_service()?;
 
-    // We provide a way to *instantiate* the service for each new
-    // connection; here, we just immediately return a new instance.
-    server.serve(|| Ok(MQTT));
+        let responses = reader.and_then(move |req| service.call(req));
+        let server = writer.send_all(responses)
+            .then(|_| Ok(()));
+        handle.spawn(server);
+
+        Ok(())
+    });
+
+    core.run(server)
 }
+
+
+
+
