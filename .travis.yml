@@ -3,8 +3,8 @@ language: rust
 sudo: false
 cache:
   cargo: true
-  directories:
-    - kcov/build
+#  directories:
+#    - kcov/build
 
 rust:
   - nightly
@@ -22,9 +22,11 @@ addons:
 
 before_script:
   - export PATH=$HOME/.cargo/bin:$PATH
-  - .travisci/install_dependencies.sh
+  - cargo install --force cargo-travis
+  - cargo install --force clippy
+  #- .travisci/install_dependencies.sh
 
 after_success:
-  - cargo clippy
+#  - cargo clippy
   - cargo coveralls
   - bash <(curl -s https://codecov.io/bash)
