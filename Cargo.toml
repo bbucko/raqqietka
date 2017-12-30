@@ -4,14 +4,12 @@ version = "0.1.0"
 authors = ["Blazej Bucko <blazej.bucko@gmail.com>"]
 
 [dependencies]
-log = "0.3.8"
+log = "0.4.0"
 simple_logger = "0.4.0"
 bytes = "0.4"
 futures = "0.1"
 tokio-io = "0.1"
 tokio-core = "0.1"
-tokio-proto = "0.1"
-tokio-service = "0.1"
 
 [dev-dependencies]
 matches = "0.1.6"

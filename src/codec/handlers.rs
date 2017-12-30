@@ -1,8 +1,7 @@
 use std::io;
-use std::string;
 use std::result;
 use std::str;
-
+use std::string;
 
 pub type Error = io::Error;
 pub type Result = result::Result<Option<super::MQTTRequest>, Error>;
@@ -71,7 +70,7 @@ pub fn publish(payload: &[u8], flags: u8) -> Result {
 
             Ok(Some(super::MQTTRequest::publish(Some(packet_identifier), topic_name, qos_level, msg)))
         }
-        _ => Err(io::Error::new(io::ErrorKind::Other, "invalid qos"))
+        _ => Err(io::Error::new(io::ErrorKind::Other, "invalid qos")),
     }
 }
 
@@ -151,7 +150,7 @@ mod tests {
     #[test]
     fn test_parse_connect_with_client_id_only() {
         match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
-            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, None, None, None) })) => assert_eq!(client_id, "abc"),
+            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, None, None, None), })) => assert_eq!(client_id, "abc"),
             _ => assert!(false),
         }
     }
@@ -159,7 +158,7 @@ mod tests {
     #[test]
     fn test_parse_connect_with_client_id_and_username_and_password() {
         match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100])) {
-            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, Some(a), Some(b), None) })) => {
+            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, Some(a), Some(b), None), })) => {
                 assert_eq!(client_id, "abc");
                 assert_eq!(a, "username");
                 assert_eq!(b, "password");
@@ -172,7 +171,7 @@ mod tests {
     fn test_parse_connect_invalid_proto() {
         match connect(&mut BytesMut::from(vec![0, 4, 97, 98, 99, 100, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
             Err(err) => assert_eq!(err.to_string(), "Invalid protocol name: abcd"),
-            _ => assert!(false)
+            _ => assert!(false),
         }
     }
 
@@ -180,14 +179,14 @@ mod tests {
     fn test_parse_connect_invalid_version() {
         match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 1, 2, 0, 60, 0, 3, 97, 98, 99])) {
             Err(err) => assert_eq!(err.to_string(), "Invalid protocol version: 1"),
-            _ => assert!(false)
+            _ => assert!(false),
         }
     }
 
     #[test]
     fn test_parse_publish_qos0() {
         match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99]), 0b00000000) {
-            Ok(Some(MQTTRequest { packet: Type::PUBLISH(None, topic, qos_level, payload) })) => {
+            Ok(Some(MQTTRequest { packet: Type::PUBLISH(None, topic, qos_level, payload), })) => {
                 assert_eq!(topic, "/something");
                 assert_eq!(qos_level, 0);
                 assert_eq!(payload, Vec::from("abc"));
@@ -199,7 +198,7 @@ mod tests {
     #[test]
     fn test_parse_publish_qos1() {
         match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99]), 0b00000010) {
-            Ok(Some(MQTTRequest { packet: Type::PUBLISH(Some(packet_id), topic, qos_level, payload) })) => {
+            Ok(Some(MQTTRequest { packet: Type::PUBLISH(Some(packet_id), topic, qos_level, payload), })) => {
                 assert_eq!(packet_id, 1);
                 assert_eq!(topic, "/something");
                 assert_eq!(qos_level, 1);

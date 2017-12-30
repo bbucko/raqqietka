@@ -1,8 +1,8 @@
 mod handlers;
 
+use bytes::BytesMut;
 use std::io;
 use std::result;
-use bytes::BytesMut;
 use tokio_io::codec::{Decoder, Encoder};
 
 static THRESHOLD: u32 = 128 * 128 * 128;
@@ -71,7 +71,6 @@ impl MQTTResponse {
     }
 }
 
-
 impl Decoder for super::MQTTCodec {
     type Item = MQTTRequest;
     type Error = io::Error;
@@ -91,7 +90,7 @@ impl Decoder for super::MQTTCodec {
                     return Ok(None);
                 }
 
-                println!("src: {:?}, src.len: {}, variable_length: {}, packets_read: {}", src, src.len(), variable_length, packets_read);
+                info!("src: {:?}, src.len: {}, variable_length: {}, packets_read: {}", src, src.len(), variable_length, packets_read);
 
                 let payload = &src.split_to(packets_read + variable_length)[packets_read..];
 
@@ -103,10 +102,10 @@ impl Decoder for super::MQTTCodec {
                     8 => handlers::subscribe(payload),
                     12 => handlers::pingreq(payload),
                     14 => handlers::disconnect(payload),
-                    _ => panic!("Unknown payload: {:?}", payload)
+                    _ => panic!("Unknown payload: {:?}", payload),
                 }
             }
-            None => Ok(None)
+            None => Ok(None),
         }
     }
 }
@@ -118,23 +117,25 @@ impl Encoder for super::MQTTCodec {
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> result::Result<(), Self::Error> {
         match item.packet {
             Type::CONACK => {
-                dst.extend(vec![0b0010_0000, 0b0000_0010, 0b0000_0001, 0b0000_0000])
+                dst.extend(vec![0b0010_0000, 0b0000_0010, 0b0000_0001, 0b0000_0000]);
+                Ok(())
             }
             Type::PUBACK(packet_identifier) => {
                 dst.extend(vec![0b0100_0000, 0b0000_0010]);
                 dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
+                Ok(())
             }
             Type::SUBACK(packet_identifier, qos) => {
                 info!("packet_identifier: {:?}, qos: {:?}", packet_identifier, qos);
                 dst.extend(vec![0b1001_0000, 0b0000_0010]);
                 dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
                 dst.extend(qos);
+                Ok(())
             }
-            Type::NONE | Type::DISCONNECT => return Ok(()),
-            _ => panic!("Unknown packet: {:?}", item)
+            Type::NONE => Ok(()),
+            Type::DISCONNECT => Err(io::Error::new(io::ErrorKind::Other, "disconnect")),
+            _ => Err(io::Error::new(io::ErrorKind::Other, "unknown packet")),
         }
-        info!("dst: {:?}", dst);
-        Ok(())
     }
 }
 

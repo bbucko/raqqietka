@@ -2,7 +2,5 @@
 pub struct Broker {}
 
 impl Broker {
-    pub fn new() -> Broker {
-        Broker {}
-    }
+    pub fn new() -> Broker { Broker {} }
 }
