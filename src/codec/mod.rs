@@ -4,9 +4,6 @@ use std::io;
 use std::result;
 use bytes::BytesMut;
 use tokio_io::codec::{Decoder, Encoder};
-use bytes::{BufMut, BigEndian};
-use futures::{future, Future};
-use tokio_service::Service;
 
 static THRESHOLD: u32 = 128 * 128 * 128;
 
@@ -74,6 +71,7 @@ impl MQTTResponse {
     }
 }
 
+
 impl Decoder for super::MQTTCodec {
     type Item = MQTTRequest;
     type Error = io::Error;
@@ -83,22 +81,28 @@ impl Decoder for super::MQTTCodec {
             return Ok(None);
         }
 
+        info!("src: {:?}", src);
         match parse_fixed(src) {
             Some((first_packet, variable_length, packets_read)) => {
-                src.split_to(packets_read);
-
                 let packet_type = first_packet >> 4;
                 let flags = first_packet & 0b0000_1111;
-                let mut payload = src.split_to(variable_length);
+
+                if src.len() < packets_read + variable_length {
+                    return Ok(None);
+                }
+
+                println!("src: {:?}, src.len: {}, variable_length: {}, packets_read: {}", src, src.len(), variable_length, packets_read);
+
+                let payload = &src.split_to(packets_read + variable_length)[packets_read..];
 
                 info!("packet_type: {:08b}, flags: {:08b}, payload: {:?}", packet_type, flags, payload);
 
                 match packet_type {
-                    1 => handlers::connect(&mut payload),
-                    3 => handlers::publish(&mut payload, flags),
-                    8 => handlers::subscribe(&mut payload),
-                    12 => handlers::pingreq(&mut payload),
-                    14 => handlers::disconnect(&mut payload),
+                    1 => handlers::connect(payload),
+                    3 => handlers::publish(payload, flags),
+                    8 => handlers::subscribe(payload),
+                    12 => handlers::pingreq(payload),
+                    14 => handlers::disconnect(payload),
                     _ => panic!("Unknown payload: {:?}", payload)
                 }
             }
@@ -113,66 +117,31 @@ impl Encoder for super::MQTTCodec {
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> result::Result<(), Self::Error> {
         match item.packet {
-            Type::CONACK => dst.put(vec![0b0010_0000, 0b0000_0010, 0b0000_0001, 0b0000_0000]),
+            Type::CONACK => {
+                dst.extend(vec![0b0010_0000, 0b0000_0010, 0b0000_0001, 0b0000_0000])
+            }
             Type::PUBACK(packet_identifier) => {
-                dst.put(vec![0b0100_0000, 0b0000_0010]);
-                dst.put_u16::<BigEndian>(packet_identifier);
+                dst.extend(vec![0b0100_0000, 0b0000_0010]);
+                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
             }
             Type::SUBACK(packet_identifier, qos) => {
-                dst.put(vec![0b01001_0000, 0b0000_0010]);
-                dst.put_u16::<BigEndian>(packet_identifier);
-                dst.put(qos);
+                info!("packet_identifier: {:?}, qos: {:?}", packet_identifier, qos);
+                dst.extend(vec![0b1001_0000, 0b0000_0010]);
+                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
+                dst.extend(qos);
             }
             Type::NONE | Type::DISCONNECT => return Ok(()),
             _ => panic!("Unknown packet: {:?}", item)
         }
-        info!("{:?}", dst);
+        info!("dst: {:?}", dst);
         Ok(())
     }
 }
 
-impl super::MQTTCodec {
-    pub fn new() -> super::MQTTCodec {
-        super::MQTTCodec {}
-    }
-}
-
-impl Service for super::MQTT {
-    // These types must match the corresponding protocol types:
-    type Request = MQTTRequest;
-    type Response = MQTTResponse;
-
-    // For non-streaming protocols, service errors are always io::Error
-    type Error = io::Error;
-
-    // The future for computing the response; box it for simplicity.
-    type Future = Box<Future<Item=Self::Response, Error=Self::Error>>;
-
-    // Produce a future for computing a response from a request.
-    fn call(&self, req: Self::Request) -> Self::Future {
-        // In this case, the response is immediate.
-        info!("Request: {:?}", req);
-        let response = match req.packet {
-            Type::CONNECT(_client_id, _username, _password, _will) => MQTTResponse::connack(),
-            Type::PUBLISH(Some(packet_identifier), _topic, _qos_level, _payload) => MQTTResponse::puback(packet_identifier),
-            Type::PUBLISH(None, _topic, 0, _payload) => MQTTResponse::none(),
-            Type::SUBSCRIBE(packet_identifier, topics) => MQTTResponse::suback(packet_identifier, topics.iter().map(|topic| topic.1).collect()),
-            Type::DISCONNECT => MQTTResponse::none(),
-            _ => panic!("unknown packet")
-        };
-
-        Box::new(future::ok(response))
-    }
-}
-
 fn parse_fixed(src: &[u8]) -> Option<(u8, usize, usize)> {
-    match src.split_first() {
-        Some((&first_packet, buf)) => {
-            let (variable_length, packets_read) = take_variable_length(buf);
-            Some((first_packet, variable_length, (packets_read + 1) as usize))
-        }
-        _ => None
-    }
+    let (variable_length, packets_read) = take_variable_length(&src[1..]);
+    info!("variable: {}: packets_read: {}", variable_length, packets_read);
+    Some((src[0], variable_length, (packets_read + 1) as usize))
 }
 
 fn take_variable_length(src: &[u8]) -> (usize, u8) {

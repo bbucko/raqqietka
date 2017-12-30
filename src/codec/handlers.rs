@@ -1,43 +1,43 @@
 use std::io;
 use std::string;
 use std::result;
-use bytes::BytesMut;
+use std::str;
 
 
 pub type Error = io::Error;
 pub type Result = result::Result<Option<super::MQTTRequest>, Error>;
 
-pub fn connect(payload: &mut BytesMut) -> Result {
+pub fn connect(payload: &[u8]) -> Result {
     trace!("CONNECT payload {:?}", payload);
+    let mut pos = 0;
 
-    let proto_name = take_string(payload);
+    let proto_name = take_string(payload, &mut pos);
     if proto_name != "MQTT" {
         return Err(io::Error::new(io::ErrorKind::Other, format!("Invalid protocol name: {}", proto_name)));
     }
 
-    let proto_level = take_one_byte(payload);
+    let proto_level = take_one_byte(payload, &mut pos);
     if proto_level != 4 {
         return Err(io::Error::new(io::ErrorKind::Other, format!("Invalid protocol version: {}", proto_level)));
     }
 
-    let connect_flags = take_one_byte(payload);
-    let _keep_alive = take_two_bytes(payload);
-
-    let client_id = take_string(payload);
+    let connect_flags = take_one_byte(payload, &mut pos);
+    let _keep_alive = take_two_bytes(payload, &mut pos);
+    let client_id = take_string(payload, &mut pos);
 
     let will = if is_flag_set(connect_flags, 2) {
-        Some((take_string(payload), take_string(payload), (connect_flags & 0b0001_1000) >> 4))
+        Some((take_string(payload, &mut pos), take_string(payload, &mut pos), (connect_flags & 0b0001_1000) >> 4))
     } else {
         None
     };
 
     let username = if is_flag_set(connect_flags, 7) {
-        Some(take_string(payload))
+        Some(take_string(payload, &mut pos))
     } else {
         None
     };
     let password = if is_flag_set(connect_flags, 6) {
-        Some(take_string(payload))
+        Some(take_string(payload, &mut pos))
     } else {
         None
     };
@@ -46,45 +46,45 @@ pub fn connect(payload: &mut BytesMut) -> Result {
     Ok(Some(super::MQTTRequest::connect(client_id, username, password, will)))
 }
 
-pub fn publish(payload: &mut BytesMut, flags: u8) -> Result {
+pub fn publish(payload: &[u8], flags: u8) -> Result {
     trace!("PUBLISH payload {:?}", payload);
+    let mut pos = 0;
 
     let dup = is_flag_set(flags, 3);
     let retain = is_flag_set(flags, 0);
     let qos_level = (flags >> 1) & 0b0000_0011;
     info!("dup: {} retain: {} qos_level: {}", dup, retain, qos_level);
 
-    let topic_name = take_string(payload);
+    let topic_name = take_string(payload, &mut pos);
 
     match qos_level {
         0 => {
-            let msg = take_payload(payload);
+            let msg = take_payload(payload, &mut pos);
             info!("publishing payload: {:?} on topic: '{}'", msg, topic_name);
 
-            assert!(payload.is_empty(), "payload: {:?}", payload);
             Ok(Some(super::MQTTRequest::publish(None, topic_name, qos_level, msg)))
         }
         1 | 2 => {
-            let packet_identifier = take_two_bytes(payload);
-            let msg = take_payload(payload);
+            let packet_identifier = take_two_bytes(payload, &mut pos);
+            let msg = take_payload(payload, &mut pos);
             info!("publishing payload: {:?} on topic: '{}' in response to packet_id: {}", msg, topic_name, packet_identifier);
 
-            assert!(payload.is_empty(), "payload: {:?}", payload);
             Ok(Some(super::MQTTRequest::publish(Some(packet_identifier), topic_name, qos_level, msg)))
         }
         _ => Err(io::Error::new(io::ErrorKind::Other, "invalid qos"))
     }
 }
 
-pub fn subscribe(payload: &mut BytesMut) -> Result {
+pub fn subscribe(payload: &[u8]) -> Result {
     trace!("SUBSCRIBE payload {:?}", payload);
+    let mut pos = 0;
 
-    let packet_identifier = take_two_bytes(payload);
+    let packet_identifier = take_two_bytes(payload, &mut pos);
 
     let mut topics = Vec::new();
-    while !payload.is_empty() {
-        let topic_filter = take_string(payload);
-        let topic_qos = take_one_byte(payload);
+    while !pos < payload.len() {
+        let topic_filter = take_string(payload, &mut pos);
+        let topic_qos = take_one_byte(payload, &mut pos);
 
         info!("filter {} :: qos {}", topic_filter, topic_qos);
 
@@ -92,42 +92,44 @@ pub fn subscribe(payload: &mut BytesMut) -> Result {
     }
 
     info!("Responding to packet id: {}", packet_identifier);
-
-    assert!(payload.is_empty(), "payload: {:?}", payload);
     Ok(Some(super::MQTTRequest::subscribe(packet_identifier, topics)))
 }
 
-pub fn pingreq(payload: &mut BytesMut) -> Result {
+pub fn pingreq(payload: &[u8]) -> Result {
     trace!("PINGREQ payload {:?}", payload);
 
-    assert_eq!(payload.len(), 0);
     Ok(Some(super::MQTTRequest::pingreq()))
 }
 
-pub fn disconnect(payload: &mut BytesMut) -> Result {
+pub fn disconnect(payload: &[u8]) -> Result {
     trace!("DISCONNECT payload {:?}", payload);
 
-    assert_eq!(payload.len(), 0);
     Ok(Some(super::MQTTRequest::disconnect()))
 }
 
-fn take_string(payload: &mut BytesMut) -> string::String {
-    let length = take_length(payload);
-    let proto_name = payload.split_to(length).to_vec();
-    String::from_utf8(proto_name).expect("Error unwrapping string")
+fn take_string(payload: &[u8], pos: &mut usize) -> string::String {
+    let length = take_length(payload, pos);
+    let proto_name = &payload[*pos..*pos + length];
+    *pos += length;
+    str::from_utf8(proto_name).unwrap().to_string()
 }
 
-fn take_length(payload: &mut BytesMut) -> usize {
-    let bytes = payload.split_to(2);
-    ((bytes[0] as usize) << 8) | (bytes[1] as usize)
+fn take_length(payload: &[u8], pos: &mut usize) -> usize {
+    let bytes = &payload[*pos..*pos + 2];
+    let length = ((bytes[0] as usize) << 8) | (bytes[1] as usize);
+    *pos += 2;
+    length
 }
 
-fn take_one_byte(payload: &mut BytesMut) -> u8 {
-    payload.split_to(1)[0]
+fn take_one_byte(src: &[u8], pos: &mut usize) -> u8 {
+    let payload = src[*pos];
+    *pos += 1;
+    payload
 }
 
-fn take_two_bytes(payload: &mut BytesMut) -> u16 {
-    let bytes = payload.split_to(2);
+fn take_two_bytes(payload: &[u8], pos: &mut usize) -> u16 {
+    let bytes = &payload[*pos..*pos + 2];
+    *pos += 2;
     (u16::from(bytes[0]) << 8) | u16::from(bytes[1])
 }
 
@@ -135,9 +137,10 @@ fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
     (connect_flags >> pos) & 0b0000_0001 == 0b0000_0001
 }
 
-fn take_payload(payload: &mut BytesMut) -> Vec<u8> {
-    let length = payload.len();
-    payload.split_to(length).to_vec()
+fn take_payload(src: &[u8], pos: &mut usize) -> Vec<u8> {
+    let payload = Vec::from(&src[*pos..]);
+    *pos += payload.len();
+    payload
 }
 
 #[cfg(test)]
@@ -215,20 +218,27 @@ mod tests {
 
     #[test]
     fn test_take_two_bytes() {
-        assert_eq!(take_two_bytes(&mut BytesMut::from(vec![0, 0])), 0);
+        let mut pos = 0;
+        assert_eq!(take_two_bytes(&mut vec![0, 0], &mut pos), 0);
+        assert_eq!(pos, 2);
     }
 
     #[test]
     fn test_take_one_byte() {
-        assert_eq!(take_one_byte(&mut BytesMut::from(vec![0])), 0);
+        let mut pos = 0;
+        assert_eq!(take_one_byte(&mut vec![0], &mut pos), 0);
+        assert_eq!(pos, 1);
     }
 
     #[test]
     fn test_length() {
-        assert_eq!(take_length(&mut BytesMut::from(vec![0, 0])), 0);
-        assert_eq!(take_length(&mut BytesMut::from(vec![0, 1])), 1);
-        assert_eq!(take_length(&mut BytesMut::from(vec![1, 0])), 256);
-        assert_eq!(take_length(&mut BytesMut::from(vec![1, 1])), 257);
-        assert_eq!(take_length(&mut BytesMut::from(vec![1, 1, 1])), 257);
+        let mut pos = 0;
+        assert_eq!(take_length(&mut vec![0, 0], &mut pos), 0);
+        assert_eq!(pos, 2);
+
+        assert_eq!(take_length(&mut vec![0, 1], &mut 0), 1);
+        assert_eq!(take_length(&mut vec![1, 0], &mut 0), 256);
+        assert_eq!(take_length(&mut vec![1, 1], &mut 0), 257);
+        assert_eq!(take_length(&mut vec![1, 1, 1], &mut 0), 257);
     }
 }

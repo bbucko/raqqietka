@@ -59,5 +59,7 @@ send_and_sleep()
 client.publish("/something/else", "abc", 1, True)
 send_and_sleep()
 
-client.disconnect()
-send_and_sleep()
+client.loop_forever()
+
+# client.disconnect()
+# send_and_sleep()
