@@ -1,6 +1,7 @@
 indent_style = "Visual"
 max_width = 140
 spaces_around_ranges = true
+write_mode = "overwrite"
 
 fn_args_density = "Compressed"
 #fn_single_line = true

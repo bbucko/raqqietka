@@ -2,8 +2,8 @@ extern crate core;
 
 use std::io;
 use std::result;
-use std::string;
 use std::slice;
+use std::string;
 
 pub type Error = io::Error;
 pub type Result<T> = result::Result<T, Error>;
@@ -34,12 +34,16 @@ pub fn connect(payload: &[u8]) -> Result<Option<super::MQTTRequest>> {
 
     let proto_name = take_string(&mut iter)?;
     if proto_name != "MQTT" {
-        return Err(Errors::custom(format!("Invalid protocol name: {}", proto_name)));
+        return Err(Errors::custom(
+            format!("Invalid protocol name: {}", proto_name),
+        ));
     }
 
     let proto_level = take_one_byte(&mut iter)?;
     if proto_level != 4 {
-        return Err(Errors::custom(format!("Invalid protocol version: {}", proto_level)));
+        return Err(Errors::custom(
+            format!("Invalid protocol version: {}", proto_level),
+        ));
     }
 
     let connect_flags = take_one_byte(&mut iter)?;
@@ -47,7 +51,7 @@ pub fn connect(payload: &[u8]) -> Result<Option<super::MQTTRequest>> {
     let client_id = take_string(&mut iter)?;
 
     let will = if is_flag_set(connect_flags, 2) {
-        Some((take_string(&mut iter)?, take_string(&mut iter)?, (connect_flags & 0b0001_1000) >> 4))
+        Some((take_string(&mut iter)?, take_string(&mut iter)?, (connect_flags & 0b0001_1000) >> 4, ))
     } else {
         None
     };
@@ -112,7 +116,7 @@ pub fn subscribe(payload: &[u8]) -> Result<Option<super::MQTTRequest>> {
                 let qos = *iter.next().unwrap();
                 Ok((string::String::from_utf8(topic_name).map_err(|_| Errors::malformed_utf8())?, qos))
             }
-            _ => Err(Errors::malformed_packet())
+            _ => Err(Errors::malformed_packet()),
         }?;
         topics.push(new_topic);
     }
@@ -136,31 +140,30 @@ pub fn disconnect(payload: &[u8]) -> Result<Option<super::MQTTRequest>> {
 fn take_string(payload: &mut slice::Iter<u8>) -> Result<string::String> {
     let length: usize = match (payload.next(), payload.next()) {
         (Some(first), Some(second)) => Ok((usize::from(*first) << 8) | usize::from(*second)),
-        _ => Err(Errors::malformed_packet())
+        _ => Err(Errors::malformed_packet()),
     }?;
 
     let string_vector = (0..length)
         .map(|_| match payload.next() {
             Some(data) => Ok(*data),
-            None => Err(Errors::malformed_packet())
+            None => Err(Errors::malformed_packet()),
         })
         .collect::<result::Result<Vec<u8>, Error>>();
 
-    string::String::from_utf8(string_vector?)
-        .map_err(|_| Errors::malformed_utf8())
+    string::String::from_utf8(string_vector?).map_err(|_| Errors::malformed_utf8())
 }
 
 fn take_one_byte(payload: &mut slice::Iter<u8>) -> Result<u8> {
     match payload.next() {
         Some(data) => Ok(*data),
-        _ => Err(Errors::malformed_packet())
+        _ => Err(Errors::malformed_packet()),
     }
 }
 
 fn take_two_bytes(payload: &mut slice::Iter<u8>) -> Result<u16> {
     match (payload.next(), payload.next()) {
         (Some(first), Some(second)) => Ok((u16::from(*first) << 8) | u16::from(*second)),
-        _ => Err(Errors::malformed_packet())
+        _ => Err(Errors::malformed_packet()),
     }
 }
 
@@ -179,16 +182,16 @@ mod tests {
 
     #[test]
     fn test_parse_connect_with_client_id_only() {
-        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
-            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, None, None, None), })) => assert_eq!(client_id, "abc"),
+        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99, ])) {
+            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, None, None, None) })) => assert_eq!(client_id, "abc"),
             _ => assert!(false),
         }
     }
 
     #[test]
     fn test_parse_connect_with_client_id_and_username_and_password() {
-        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100])) {
-            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, Some(a), Some(b), None), })) => {
+        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100, ])) {
+            Ok(Some(MQTTRequest { packet: Type::CONNECT(client_id, Some(a), Some(b), None) })) => {
                 assert_eq!(client_id, "abc");
                 assert_eq!(a, "username");
                 assert_eq!(b, "password");
@@ -199,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_parse_connect_invalid_proto() {
-        match connect(&mut BytesMut::from(vec![0, 4, 97, 98, 99, 100, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
+        match connect(&mut BytesMut::from(vec![0, 4, 97, 98, 99, 100, 4, 2, 0, 60, 0, 3, 97, 98, 99, ])) {
             Err(err) => assert_eq!(err.to_string(), "Invalid protocol name: abcd"),
             _ => assert!(false),
         }
@@ -207,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_parse_connect_invalid_version() {
-        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 1, 2, 0, 60, 0, 3, 97, 98, 99])) {
+        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 1, 2, 0, 60, 0, 3, 97, 98, 99, ])) {
             Err(err) => assert_eq!(err.to_string(), "Invalid protocol version: 1"),
             _ => assert!(false),
         }
@@ -215,8 +218,8 @@ mod tests {
 
     #[test]
     fn test_parse_publish_qos0() {
-        match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99]), 0b00000000) {
-            Ok(Some(MQTTRequest { packet: Type::PUBLISH(None, topic, qos_level, payload), })) => {
+        match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99, ]), 0b00000000) {
+            Ok(Some(MQTTRequest { packet: Type::PUBLISH(None, topic, qos_level, payload) })) => {
                 assert_eq!(topic, "/something");
                 assert_eq!(qos_level, 0);
                 assert_eq!(payload, Vec::from("abc"));
@@ -227,8 +230,8 @@ mod tests {
 
     #[test]
     fn test_parse_publish_qos1() {
-        match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99]), 0b00000010) {
-            Ok(Some(MQTTRequest { packet: Type::PUBLISH(Some(packet_id), topic, qos_level, payload), })) => {
+        match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99, ]), 0b00000010) {
+            Ok(Some(MQTTRequest { packet: Type::PUBLISH(Some(packet_id), topic, qos_level, payload) })) => {
                 assert_eq!(packet_id, 1);
                 assert_eq!(topic, "/something");
                 assert_eq!(qos_level, 1);
@@ -249,7 +252,7 @@ mod tests {
     fn test_take_string() {
         match take_string(&mut vec![0, 3, 97, 98, 99].iter()) {
             Ok(str) => assert_eq!(str, "abc".to_string()),
-            _ => assert!(false)
+            _ => assert!(false),
         }
     }
 
@@ -257,7 +260,7 @@ mod tests {
     fn test_take_malformed_string() {
         match take_string(&mut vec![0, 3, 97, 98].iter()) {
             Err(err) => assert_eq!(err.to_string(), "malformed packet"),
-            _ => assert!(false)
+            _ => assert!(false),
         }
     }
 
@@ -265,7 +268,7 @@ mod tests {
     fn test_take_two_bytes() {
         match take_two_bytes(&mut vec![0, 0].iter()) {
             Ok(data) => assert_eq!(data, 0),
-            _ => assert!(false)
+            _ => assert!(false),
         }
     }
 
@@ -273,7 +276,7 @@ mod tests {
     fn test_take_one_byte() {
         match take_one_byte(&mut vec![0].iter()) {
             Ok(data) => assert_eq!(data, 0),
-            _ => assert!(false)
+            _ => assert!(false),
         }
     }
 }

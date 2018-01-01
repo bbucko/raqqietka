@@ -122,13 +122,13 @@ impl Encoder for super::MQTTCodec {
             }
             Type::PUBACK(packet_identifier) => {
                 dst.extend(vec![0b0100_0000, 0b0000_0010]);
-                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
+                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8, ]);
                 Ok(())
             }
             Type::SUBACK(packet_identifier, qos) => {
                 info!("packet_identifier: {:?}, qos: {:?}", packet_identifier, qos);
                 dst.extend(vec![0b1001_0000, 0b0000_0010]);
-                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
+                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8, ]);
                 dst.extend(qos);
                 Ok(())
             }
@@ -180,8 +180,8 @@ mod tests {
         assert_eq!(take_variable_length(&vec![0x80, 0x80, 0x01]), (16_384, 3));
         assert_eq!(take_variable_length(&vec![0xFF, 0xFF, 0x7F]), (2_097_151, 3));
 
-        assert_eq!(take_variable_length(&vec![0x80, 0x80, 0x80, 0x01]), (2_097_152, 4));
-        assert_eq!(take_variable_length(&vec![0xFF, 0xFF, 0xFF, 0x7F]), (268_435_455, 4));
+        assert_eq!(take_variable_length(&vec![0x80, 0x80, 0x80, 0x01]), (2_097_152, 4, ));
+        assert_eq!(take_variable_length(&vec![0xFF, 0xFF, 0xFF, 0x7F]), (268_435_455, 4, ));
     }
 
     #[test]
