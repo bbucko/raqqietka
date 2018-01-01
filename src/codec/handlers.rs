@@ -143,14 +143,15 @@ fn take_string(payload: &mut slice::Iter<u8>) -> Result<string::String> {
         _ => Err(Errors::malformed_packet()),
     }?;
 
-    let string_vector = (0..length)
-        .map(|_| match payload.next() {
-            Some(data) => Ok(*data),
-            None => Err(Errors::malformed_packet()),
-        })
-        .collect::<result::Result<Vec<u8>, Error>>();
+    let string_vector = payload
+        .take(length)
+        .map(|x| *x)
+        .collect::<Vec<u8>>();
 
-    string::String::from_utf8(string_vector?).map_err(|_| Errors::malformed_utf8())
+    match string_vector.len() {
+        x if x == length => string::String::from_utf8(string_vector).map_err(|_| Errors::malformed_utf8()),
+        _ => Err(Errors::malformed_packet())
+    }
 }
 
 fn take_one_byte(payload: &mut slice::Iter<u8>) -> Result<u8> {
@@ -260,7 +261,7 @@ mod tests {
     fn test_take_malformed_string() {
         match take_string(&mut vec![0, 3, 97, 98].iter()) {
             Err(err) => assert_eq!(err.to_string(), "malformed packet"),
-            _ => assert!(false),
+            Ok(data) => assert_eq!(data, "ab"),
         }
     }
 
