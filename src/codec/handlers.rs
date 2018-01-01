@@ -8,18 +8,38 @@ use std::slice;
 pub type Error = io::Error;
 pub type Result = result::Result<Option<super::MQTTRequest>, Error>;
 
+struct Errors;
+
+impl Errors {
+    fn new(error_message: String) -> io::Error {
+        io::Error::new(io::ErrorKind::Other, error_message)
+    }
+
+    fn malformed_packet() -> io::Error {
+        io::Error::new(io::ErrorKind::Other, "malformed packet")
+    }
+
+    fn malformed_utf8() -> io::Error {
+        io::Error::new(io::ErrorKind::Other, "malformed UTF-8")
+    }
+
+    fn invalid_qos() -> io::Error {
+        io::Error::new(io::ErrorKind::Other, "invalid QOS")
+    }
+}
+
 pub fn connect(payload: &[u8]) -> Result {
     trace!("CONNECT payload {:?}", payload);
     let mut iter = payload.iter();
 
     let proto_name = take_string(&mut iter)?;
     if proto_name != "MQTT" {
-        return Err(io::Error::new(io::ErrorKind::Other, format!("Invalid protocol name: {}", proto_name)));
+        return Err(Errors::new(format!("Invalid protocol name: {}", proto_name)));
     }
 
     let proto_level = take_one_byte(&mut iter)?;
     if proto_level != 4 {
-        return Err(io::Error::new(io::ErrorKind::Other, format!("Invalid protocol version: {}", proto_level)));
+        return Err(Errors::new(format!("Invalid protocol version: {}", proto_level)));
     }
 
     let connect_flags = take_one_byte(&mut iter)?;
@@ -72,7 +92,7 @@ pub fn publish(payload: &[u8], flags: u8) -> Result {
 
             Ok(Some(super::MQTTRequest::publish(Some(packet_identifier), topic_name, qos_level, msg)))
         }
-        _ => Err(io::Error::new(io::ErrorKind::Other, "invalid qos")),
+        _ => Err(Errors::invalid_qos()),
     }
 }
 
@@ -90,9 +110,9 @@ pub fn subscribe(payload: &[u8]) -> Result {
                 let length = (u16::from(*first) >> 8) | u16::from(*second);
                 let topic_name = (0..length).map(|_| *iter.next().unwrap()).collect::<Vec<u8>>();
                 let qos = *iter.next().unwrap();
-                Ok((string::String::from_utf8(topic_name).map_err(|_| io::Error::new(io::ErrorKind::Other, "malformed utf8"))?, qos))
+                Ok((string::String::from_utf8(topic_name).map_err(|_| Errors::malformed_utf8())?, qos))
             }
-            _ => Err(io::Error::new(io::ErrorKind::Other, "malformed packet"))
+            _ => Err(Errors::malformed_packet())
         }?;
         topics.push(new_topic);
     }
@@ -116,36 +136,32 @@ pub fn disconnect(payload: &[u8]) -> Result {
 fn take_string(payload: &mut slice::Iter<u8>) -> result::Result<string::String, io::Error> {
     let length: usize = match (payload.next(), payload.next()) {
         (Some(first), Some(second)) => Ok((usize::from(*first) << 8) | usize::from(*second)),
-        _ => Err(io::Error::new(io::ErrorKind::Other, "malformed packet"))
+        _ => Err(Errors::malformed_packet())
     }?;
-
 
     let str: result::Result<Vec<u8>, io::Error> = (0..length)
         .map(|_| {
             let result: result::Result<u8, Error> = match payload.next() {
                 Some(data) => Ok(*data),
-                None => Err(io::Error::new(io::ErrorKind::Other, "malformed packet"))
+                None => Err(Errors::malformed_packet())
             };
             result
         }).collect();
-
-    let unpacked_str = str?;
-
-    string::String::from_utf8(unpacked_str)
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "malformed utf8"))
+    string::String::from_utf8(str?)
+        .map_err(|_| Errors::malformed_utf8())
 }
 
 fn take_one_byte(payload: &mut slice::Iter<u8>) -> result::Result<u8, io::Error> {
     match payload.next() {
         Some(data) => Ok(*data),
-        _ => Err(io::Error::new(io::ErrorKind::Other, "malformed packet"))
+        _ => Err(Errors::malformed_packet())
     }
 }
 
 fn take_two_bytes(payload: &mut slice::Iter<u8>) -> result::Result<u16, io::Error> {
     match (payload.next(), payload.next()) {
         (Some(first), Some(second)) => Ok((u16::from(*first) << 8) | u16::from(*second)),
-        _ => Err(io::Error::new(io::ErrorKind::Other, "malformed packet"))
+        _ => Err(Errors::malformed_packet())
     }
 }
 
