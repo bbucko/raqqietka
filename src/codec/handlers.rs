@@ -145,7 +145,7 @@ fn take_string(payload: &mut slice::Iter<u8>) -> Result<string::String> {
 
     let string_vector = payload
         .take(length)
-        .map(|x| *x)
+        .cloned()
         .collect::<Vec<u8>>();
 
     match string_vector.len() {
