@@ -5,6 +5,7 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 extern crate simple_logger;
+
 extern crate tokio_core;
 extern crate tokio_io;
 
@@ -12,11 +13,10 @@ extern crate tokio_io;
 extern crate matches;
 
 use std::io;
-
+use log::LogLevel;
 use tokio_core::net::TcpListener;
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
-
 use futures::{Future, Sink, Stream};
 
 pub struct MQTTCodec;
@@ -25,7 +25,7 @@ pub struct MQTTCodec;
 struct Client;
 
 fn main() {
-    simple_logger::init().unwrap();
+    simple_logger::init_with_level(LogLevel::Trace).unwrap();
     info!("raqqietka starting");
 
     let mut core = Core::new().unwrap();
