@@ -6,40 +6,40 @@ use std::string;
 use std::slice;
 
 pub type Error = io::Error;
-pub type Result = result::Result<Option<super::MQTTRequest>, Error>;
+pub type Result<T> = result::Result<T, Error>;
 
 struct Errors;
 
 impl Errors {
-    fn new(error_message: String) -> io::Error {
-        io::Error::new(io::ErrorKind::Other, error_message)
+    fn custom(error_message: String) -> Error {
+        Error::new(io::ErrorKind::Other, error_message)
     }
 
-    fn malformed_packet() -> io::Error {
-        io::Error::new(io::ErrorKind::Other, "malformed packet")
+    fn malformed_packet() -> Error {
+        Error::new(io::ErrorKind::Other, "malformed packet")
     }
 
-    fn malformed_utf8() -> io::Error {
-        io::Error::new(io::ErrorKind::Other, "malformed UTF-8")
+    fn malformed_utf8() -> Error {
+        Error::new(io::ErrorKind::Other, "malformed UTF-8")
     }
 
-    fn invalid_qos() -> io::Error {
-        io::Error::new(io::ErrorKind::Other, "invalid QOS")
+    fn invalid_qos() -> Error {
+        Error::new(io::ErrorKind::Other, "invalid QOS")
     }
 }
 
-pub fn connect(payload: &[u8]) -> Result {
+pub fn connect(payload: &[u8]) -> Result<Option<super::MQTTRequest>> {
     trace!("CONNECT payload {:?}", payload);
     let mut iter = payload.iter();
 
     let proto_name = take_string(&mut iter)?;
     if proto_name != "MQTT" {
-        return Err(Errors::new(format!("Invalid protocol name: {}", proto_name)));
+        return Err(Errors::custom(format!("Invalid protocol name: {}", proto_name)));
     }
 
     let proto_level = take_one_byte(&mut iter)?;
     if proto_level != 4 {
-        return Err(Errors::new(format!("Invalid protocol version: {}", proto_level)));
+        return Err(Errors::custom(format!("Invalid protocol version: {}", proto_level)));
     }
 
     let connect_flags = take_one_byte(&mut iter)?;
@@ -67,7 +67,7 @@ pub fn connect(payload: &[u8]) -> Result {
     Ok(Some(super::MQTTRequest::connect(client_id, username, password, will)))
 }
 
-pub fn publish(payload: &[u8], flags: u8) -> Result {
+pub fn publish(payload: &[u8], flags: u8) -> Result<Option<super::MQTTRequest>> {
     trace!("PUBLISH payload {:?}", payload);
     let mut iter = payload.iter();
 
@@ -96,7 +96,7 @@ pub fn publish(payload: &[u8], flags: u8) -> Result {
     }
 }
 
-pub fn subscribe(payload: &[u8]) -> Result {
+pub fn subscribe(payload: &[u8]) -> Result<Option<super::MQTTRequest>> {
     trace!("SUBSCRIBE payload {:?}", payload);
     let mut iter = payload.iter();
 
@@ -121,44 +121,43 @@ pub fn subscribe(payload: &[u8]) -> Result {
     Ok(Some(super::MQTTRequest::subscribe(packet_identifier, topics)))
 }
 
-pub fn pingreq(payload: &[u8]) -> Result {
+pub fn pingreq(payload: &[u8]) -> Result<Option<super::MQTTRequest>> {
     trace!("PINGREQ payload {:?}", payload);
 
     Ok(Some(super::MQTTRequest::pingreq()))
 }
 
-pub fn disconnect(payload: &[u8]) -> Result {
+pub fn disconnect(payload: &[u8]) -> Result<Option<super::MQTTRequest>> {
     trace!("DISCONNECT payload {:?}", payload);
 
     Ok(Some(super::MQTTRequest::disconnect()))
 }
 
-fn take_string(payload: &mut slice::Iter<u8>) -> result::Result<string::String, io::Error> {
+fn take_string(payload: &mut slice::Iter<u8>) -> Result<string::String> {
     let length: usize = match (payload.next(), payload.next()) {
         (Some(first), Some(second)) => Ok((usize::from(*first) << 8) | usize::from(*second)),
         _ => Err(Errors::malformed_packet())
     }?;
 
-    let str: result::Result<Vec<u8>, io::Error> = (0..length)
-        .map(|_| {
-            let result: result::Result<u8, Error> = match payload.next() {
-                Some(data) => Ok(*data),
-                None => Err(Errors::malformed_packet())
-            };
-            result
-        }).collect();
-    string::String::from_utf8(str?)
+    let string_vector = (0..length)
+        .map(|_| match payload.next() {
+            Some(data) => Ok(*data),
+            None => Err(Errors::malformed_packet())
+        })
+        .collect::<result::Result<Vec<u8>, Error>>();
+
+    string::String::from_utf8(string_vector?)
         .map_err(|_| Errors::malformed_utf8())
 }
 
-fn take_one_byte(payload: &mut slice::Iter<u8>) -> result::Result<u8, io::Error> {
+fn take_one_byte(payload: &mut slice::Iter<u8>) -> Result<u8> {
     match payload.next() {
         Some(data) => Ok(*data),
         _ => Err(Errors::malformed_packet())
     }
 }
 
-fn take_two_bytes(payload: &mut slice::Iter<u8>) -> result::Result<u16, io::Error> {
+fn take_two_bytes(payload: &mut slice::Iter<u8>) -> Result<u16> {
     match (payload.next(), payload.next()) {
         (Some(first), Some(second)) => Ok((u16::from(*first) << 8) | u16::from(*second)),
         _ => Err(Errors::malformed_packet())
@@ -166,7 +165,7 @@ fn take_two_bytes(payload: &mut slice::Iter<u8>) -> result::Result<u16, io::Erro
 }
 
 fn take_payload(payload: &mut slice::Iter<u8>) -> Vec<u8> {
-    payload.map(|x| *x).collect::<Vec<u8>>()
+    payload.cloned().collect::<Vec<u8>>()
 }
 
 fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
