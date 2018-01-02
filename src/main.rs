@@ -1,3 +1,5 @@
+#![feature(test)]
+
 mod codec;
 
 extern crate bytes;
@@ -11,6 +13,9 @@ extern crate tokio_io;
 
 #[cfg(test)]
 extern crate matches;
+
+#[cfg(test)]
+extern crate test;
 
 use futures::{Future, Sink, Stream};
 use log::LogLevel;

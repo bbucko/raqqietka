@@ -111,10 +111,10 @@ pub fn subscribe(payload: &[u8]) -> Result<Option<super::MQTTRequest>> {
         let new_topic = match (iter.next(), iter.next()) {
             (None, None) => break,
             (Some(first), Some(second)) => {
-                let length = (u16::from(*first) >> 8) | u16::from(*second);
-                let topic_name = (0..length).map(|_| *iter.next().unwrap()).collect::<Vec<u8>>();
+                let length = (usize::from(*first) >> 8) | usize::from(*second);
+                let topic_name = take_string_of_length(&mut iter, length)?;
                 let qos = *iter.next().unwrap();
-                Ok((string::String::from_utf8(topic_name).map_err(|_| Errors::malformed_utf8())?, qos))
+                Ok((topic_name, qos))
             }
             _ => Err(Errors::malformed_packet()),
         }?;
@@ -143,11 +143,14 @@ fn take_string(payload: &mut slice::Iter<u8>) -> Result<string::String> {
         _ => Err(Errors::malformed_packet()),
     }?;
 
+    take_string_of_length(payload, length)
+}
+
+fn take_string_of_length(payload: &mut slice::Iter<u8>, length: usize) -> Result<String> {
     let string_vector = payload
         .take(length)
         .cloned()
         .collect::<Vec<u8>>();
-
     match string_vector.len() {
         x if x == length => string::String::from_utf8(string_vector).map_err(|_| Errors::malformed_utf8()),
         _ => Err(Errors::malformed_packet())
@@ -180,6 +183,7 @@ fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
 mod tests {
     use super::*;
     use super::super::*;
+    use test::Bencher;
 
     #[test]
     fn test_parse_connect_with_client_id_only() {
@@ -243,6 +247,23 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_subscribe() {
+        match subscribe(&mut BytesMut::from(vec![0, 1, 0, 1, 97, 0, 0, 3, 97, 98, 99, 1])) {
+            Ok(Some(MQTTRequest { packet: Type::SUBSCRIBE(packet_id, topics) })) => {
+                assert_eq!(packet_id, 1);
+                assert_eq!(topics.len(), 2);
+
+                assert_eq!(topics[0].0, "a");
+                assert_eq!(topics[0].1, 0);
+
+                assert_eq!(topics[1].0, "abc");
+                assert_eq!(topics[1].1, 1);
+            }
+            _ => assert!(false),
+        }
+    }
+
+    #[test]
     fn test_is_flag_set() {
         assert!(is_flag_set(0b0000_00010, 1));
         assert!(is_flag_set(0b0000_00001, 0));
@@ -279,5 +300,29 @@ mod tests {
             Ok(data) => assert_eq!(data, 0),
             _ => assert!(false),
         }
+    }
+
+    #[bench]
+    fn bench_publish(b: &mut Bencher) {
+        let payload = BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99, ]);
+        b.iter(|| {
+            publish(&payload, 0)
+        })
+    }
+
+    #[bench]
+    fn bench_connect(b: &mut Bencher) {
+        let payload = BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100, ]);
+        b.iter(|| {
+            connect(&payload)
+        })
+    }
+
+    #[bench]
+    fn bench_subscribe(b: &mut Bencher) {
+        let payload = BytesMut::from(vec![0, 1, 0, 1, 97, 0, 0, 3, 97, 98, 99, 1]);
+        b.iter(|| {
+            subscribe(&payload)
+        })
     }
 }
