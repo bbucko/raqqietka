@@ -9,7 +9,10 @@ static THRESHOLD: u32 = 128 * 128 * 128;
 
 #[derive(Debug)]
 pub enum Type {
-    CONNECT(String, Option<String>, Option<String>, Option<(String, String, u8)>),
+    CONNECT(String,
+            Option<String>,
+            Option<String>,
+            Option<(String, String, u8)>),
     CONACK,
     PUBLISH(Option<u16>, String, u8, Vec<u8>),
     PUBACK(u16),
@@ -22,57 +25,50 @@ pub enum Type {
 }
 
 #[derive(Debug)]
-pub struct MQTTRequest {
+pub struct MQTTPacket {
     pub packet: Type,
 }
 
-impl MQTTRequest {
-    fn connect(client_id: String, username: Option<String>, password: Option<String>, will: Option<(String, String, u8)>) -> MQTTRequest {
-        MQTTRequest { packet: Type::CONNECT(client_id, username, password, will) }
+impl MQTTPacket {
+    pub fn connect(client_id: String, username: Option<String>, password: Option<String>, will: Option<(String, String, u8)>) -> MQTTPacket {
+        MQTTPacket { packet: Type::CONNECT(client_id, username, password, will) }
     }
 
-    fn publish(packet_identifier: Option<u16>, topic: String, qos_level: u8, payload: Vec<u8>) -> MQTTRequest {
-        MQTTRequest { packet: Type::PUBLISH(packet_identifier, topic, qos_level, payload) }
+    pub fn publish(packet_identifier: Option<u16>, topic: String, qos_level: u8, payload: Vec<u8>) -> MQTTPacket {
+        MQTTPacket { packet: Type::PUBLISH(packet_identifier, topic, qos_level, payload) }
     }
 
-    fn subscribe(packet_identifier: u16, topics: Vec<(String, u8)>) -> MQTTRequest {
-        MQTTRequest { packet: Type::SUBSCRIBE(packet_identifier, topics) }
+    pub fn subscribe(packet_identifier: u16, topics: Vec<(String, u8)>) -> MQTTPacket {
+        MQTTPacket { packet: Type::SUBSCRIBE(packet_identifier, topics) }
     }
 
-    fn pingreq() -> MQTTRequest {
-        MQTTRequest { packet: Type::PINGREQ }
+    pub fn pingreq() -> MQTTPacket {
+        MQTTPacket { packet: Type::PINGREQ }
     }
 
-    fn disconnect() -> MQTTRequest {
-        MQTTRequest { packet: Type::DISCONNECT }
-    }
-}
-
-#[derive(Debug)]
-pub struct MQTTResponse {
-    pub packet: Type,
-}
-
-impl MQTTResponse {
-    pub fn connack() -> MQTTResponse {
-        MQTTResponse { packet: Type::CONACK }
+    pub fn disconnect() -> MQTTPacket {
+        MQTTPacket { packet: Type::DISCONNECT }
     }
 
-    pub fn puback(packet_identifier: u16) -> MQTTResponse {
-        MQTTResponse { packet: Type::PUBACK(packet_identifier) }
+    pub fn connack() -> MQTTPacket {
+        MQTTPacket { packet: Type::CONACK }
     }
 
-    pub fn suback(packet_identifier: u16, qos: Vec<u8>) -> MQTTResponse {
-        MQTTResponse { packet: Type::SUBACK(packet_identifier, qos) }
+    pub fn puback(packet_identifier: u16) -> MQTTPacket {
+        MQTTPacket { packet: Type::PUBACK(packet_identifier) }
     }
 
-    pub fn none() -> MQTTResponse {
-        MQTTResponse { packet: Type::NONE }
+    pub fn suback(packet_identifier: u16, qos: Vec<u8>) -> MQTTPacket {
+        MQTTPacket { packet: Type::SUBACK(packet_identifier, qos) }
+    }
+
+    pub fn none() -> MQTTPacket {
+        MQTTPacket { packet: Type::NONE }
     }
 }
 
 impl Decoder for super::MQTTCodec {
-    type Item = MQTTRequest;
+    type Item = MQTTPacket;
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> result::Result<Option<Self::Item>, Self::Error> {
@@ -90,11 +86,16 @@ impl Decoder for super::MQTTCodec {
                     return Ok(None);
                 }
 
-                info!("src: {:?}, src.len: {}, variable_length: {}, packets_read: {}", src, src.len(), variable_length, packets_read);
+                info!("src: {:?}, src.len: {}, variable_length: {}, packets_read: {}",
+                      src,
+                      src.len(),
+                      variable_length,
+                      packets_read);
 
                 let payload = &src.split_to(packets_read + variable_length)[packets_read..];
 
-                info!("packet_type: {:08b}, flags: {:08b}, payload: {:?}", packet_type, flags, payload);
+                info!("packet_type: {:08b}, flags: {:08b}, payload: {:?}",
+                      packet_type, flags, payload);
 
                 match packet_type {
                     1 => handlers::connect(payload),
@@ -111,7 +112,7 @@ impl Decoder for super::MQTTCodec {
 }
 
 impl Encoder for super::MQTTCodec {
-    type Item = MQTTResponse;
+    type Item = MQTTPacket;
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> result::Result<(), Self::Error> {
@@ -122,13 +123,13 @@ impl Encoder for super::MQTTCodec {
             }
             Type::PUBACK(packet_identifier) => {
                 dst.extend(vec![0b0100_0000, 0b0000_0010]);
-                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8, ]);
+                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
                 Ok(())
             }
             Type::SUBACK(packet_identifier, qos) => {
                 info!("packet_identifier: {:?}, qos: {:?}", packet_identifier, qos);
                 dst.extend(vec![0b1001_0000, 0b0000_0010]);
-                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8, ]);
+                dst.extend(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
                 dst.extend(qos);
                 Ok(())
             }
@@ -141,7 +142,8 @@ impl Encoder for super::MQTTCodec {
 
 fn parse_fixed(src: &[u8]) -> Option<(u8, usize, usize)> {
     let (variable_length, packets_read) = take_variable_length(&src[1..]);
-    info!("variable: {}: packets_read: {}", variable_length, packets_read);
+    info!("variable: {}: packets_read: {}",
+          variable_length, packets_read);
     Some((src[0], variable_length, (packets_read + 1) as usize))
 }
 
@@ -160,7 +162,9 @@ fn take_variable_length(src: &[u8]) -> (usize, u8) {
             break;
         }
 
-        assert!(multiplier <= THRESHOLD, "malformed remaining length {}", multiplier);
+        assert!(multiplier <= THRESHOLD,
+                "malformed remaining length {}",
+                multiplier);
     }
     (value as usize, packets_read)
 }
@@ -180,8 +184,8 @@ mod tests {
         assert_eq!(take_variable_length(&vec![0x80, 0x80, 0x01]), (16_384, 3));
         assert_eq!(take_variable_length(&vec![0xFF, 0xFF, 0x7F]), (2_097_151, 3));
 
-        assert_eq!(take_variable_length(&vec![0x80, 0x80, 0x80, 0x01]), (2_097_152, 4, ));
-        assert_eq!(take_variable_length(&vec![0xFF, 0xFF, 0xFF, 0x7F]), (268_435_455, 4, ));
+        assert_eq!(take_variable_length(&vec![0x80, 0x80, 0x80, 0x01]), (2_097_152, 4));
+        assert_eq!(take_variable_length(&vec![0xFF, 0xFF, 0xFF, 0x7F]), (268_435_455, 4));
     }
 
     #[test]
