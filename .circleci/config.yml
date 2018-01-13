@@ -7,10 +7,10 @@ jobs:
       - checkout
       - run:
           name: Cargo build
-          command: cargo build
+          command: cargo +nightly build
       - run:
           name: Cargo test
-          command: cargo test
+          command: cargo +nightly test
       - run:
-                name: Cargo bench
-                command: cargo bench
+          name: Cargo bench
+          command: cargo +nightly bench
