@@ -1,5 +1,3 @@
-#![feature(test)]
-
 mod codec;
 mod broker;
 

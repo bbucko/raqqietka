@@ -3,11 +3,15 @@ language: rust
 sudo: false
 cache:
   cargo: true
-#  directories:
-#    - kcov/build
 
 rust:
+  - stable
+  - beta
   - nightly
+
+matrix:
+  allow_failures:
+    - rust: nightly
 
 addons:
   apt:
@@ -23,8 +27,8 @@ addons:
 before_script:
   - export PATH=$HOME/.cargo/bin:$PATH
   - cargo install --force cargo-travis
-  - cargo install --force clippy
-  #- .travisci/install_dependencies.sh
+#  - cargo install --force clippy
+#  - .travisci/install_dependencies.sh
 
 after_success:
 #  - cargo clippy

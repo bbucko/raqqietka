@@ -6,9 +6,6 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Install nightly
-          command: rustup toolchain install nightly && rustup default nightly
-      - run:
           name: Cargo build
           command: cargo build
       - run:
