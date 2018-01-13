@@ -6,11 +6,14 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Install nightly
+          command: rustup toolchain install nightly && rustup default nightly
+      - run:
           name: Cargo build
-          command: cargo +nightly build
+          command: cargo build
       - run:
           name: Cargo test
-          command: cargo +nightly test
+          command: cargo test
       - run:
           name: Cargo bench
-          command: cargo +nightly bench
+          command: cargo bench
