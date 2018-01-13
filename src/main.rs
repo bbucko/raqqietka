@@ -12,8 +12,8 @@ extern crate tokio_io;
 #[cfg(test)]
 extern crate matches;
 
-#[cfg(test)]
-extern crate test;
+//#[cfg(test)]
+//extern crate test;
 
 use broker::{Broker, Client};
 use futures::{Future, Stream};

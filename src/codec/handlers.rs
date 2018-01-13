@@ -183,7 +183,7 @@ fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
 mod tests {
     use super::*;
     use super::super::*;
-    use test::Bencher;
+//    use test::Bencher;
 
     #[test]
     fn test_parse_connect_with_client_id_only() {
@@ -302,27 +302,27 @@ mod tests {
         }
     }
 
-    #[bench]
-    fn bench_publish(b: &mut Bencher) {
-        let payload = BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99, ]);
-        b.iter(|| {
-            publish(&payload, 0)
-        })
-    }
-
-    #[bench]
-    fn bench_connect(b: &mut Bencher) {
-        let payload = BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100, ]);
-        b.iter(|| {
-            connect(&payload)
-        })
-    }
-
-    #[bench]
-    fn bench_subscribe(b: &mut Bencher) {
-        let payload = BytesMut::from(vec![0, 1, 0, 1, 97, 0, 0, 3, 97, 98, 99, 1]);
-        b.iter(|| {
-            subscribe(&payload)
-        })
-    }
+//    #[bench]
+//    fn bench_publish(b: &mut Bencher) {
+//        let payload = BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99, ]);
+//        b.iter(|| {
+//            publish(&payload, 0)
+//        })
+//    }
+//
+//    #[bench]
+//    fn bench_connect(b: &mut Bencher) {
+//        let payload = BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100, ]);
+//        b.iter(|| {
+//            connect(&payload)
+//        })
+//    }
+//
+//    #[bench]
+//    fn bench_subscribe(b: &mut Bencher) {
+//        let payload = BytesMut::from(vec![0, 1, 0, 1, 97, 0, 0, 3, 97, 98, 99, 1]);
+//        b.iter(|| {
+//            subscribe(&payload)
+//        })
+//    }
 }

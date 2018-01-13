@@ -11,6 +11,6 @@ jobs:
       - run:
           name: Cargo test
           command: cargo test
-      - run:
-          name: Cargo bench
-          command: cargo bench
+#      - run:
+#          name: Cargo bench
+#          command: cargo bench
