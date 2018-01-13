@@ -50,7 +50,7 @@ fn main() {
             let framed = stream.framed(MQTTCodec);
             let handle_inner = handle.clone();
 
-            let broker = broker.clone();
+            let broker = Rc::clone(&broker);
             let mqtt = framed
                 .into_future()
                 .map_err(|(err, _)| err)
@@ -70,19 +70,21 @@ fn main() {
                         .forward(sender)
                         .then(move |_| Ok::<_, ()>(()));
 
-                    let connection = receiver
+                    let responses = receiver
                         .for_each(move |msg| handle_msg(msg, &client))
                         .then(move |_| {
                             info!("what's going on in here?");
                             Ok::<_, ()>(())
                         })
+                        //combine receiver and transmitter?
                         .select(tx_future)
                         .then(move |_| {
                             info!("disconnecting client: {:?}", client_id);
                             Ok::<_, ()>(())
                         });
 
-                    handle_inner.spawn(connection);
+                    //handle "inner" futures
+                    handle_inner.spawn(responses);
                     Ok::<_, ()>(())
                 })
                 .then(|_| {
@@ -90,6 +92,7 @@ fn main() {
                     Ok(())
                 });
 
+            //handle all futures
             handle.spawn(mqtt);
             Ok(())
         });
