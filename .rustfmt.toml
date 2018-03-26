@@ -1,11 +1,9 @@
-indent_style = "Visual"
-max_width = 140
+max_width = 160
 spaces_around_ranges = true
 write_mode = "overwrite"
 
 fn_args_density = "Compressed"
-#fn_single_line = true
-
+fn_single_line = true
 
 imports_layout = "Horizontal"
 
@@ -13,3 +11,4 @@ reorder_imported_names = true
 reorder_imports = true
 reorder_imports_in_group = true
 reorder_extern_crates = true
+use_try_shorthand = true
