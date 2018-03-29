@@ -8,8 +8,12 @@ extern crate log;
 extern crate simple_logger;
 extern crate tokio;
 
-use bytes::BytesMut;
+use bytes::{BufMut, Bytes, BytesMut};
+
+use futures::future::{self, Either};
+use futures::sync::mpsc;
 use futures::{Future, Stream};
+
 use log::LogLevel;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -18,11 +22,17 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 
 static THRESHOLD: u32 = 128 * 128 * 128;
+static LINES_PER_TICK: usize = 10;
+
+type Tx = mpsc::UnboundedSender<Bytes>;
+type Rx = mpsc::UnboundedReceiver<Bytes>;
 
 #[derive(Debug)]
 pub struct Client {
     packets: MQTTCodec,
     client_info: String,
+    rx: Rx,
+    tx: Tx,
 }
 
 impl Future for Client {
@@ -30,29 +40,60 @@ impl Future for Client {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<(), io::Error> {
+        debug!("flush outbound queue: {:?}", self.rx);
+        for i in 0 .. LINES_PER_TICK {
+            match self.rx.poll().unwrap() {
+                Async::Ready(Some(v)) => {
+                    self.packets.buffer(&v);
+
+                    //be good to others my dear future ;)
+                    if i + 1 == LINES_PER_TICK {
+                        task::current().notify();
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        self.packets.poll_flush()?;
+
         while let Async::Ready(packet) = self.packets.poll()? {
-            if let Some(mqtt_packet) = packet {
+            if let Some(packet) = packet {
                 //handle various packets
-                info!("Received parsed packet ({:?}) : {:?}", self, mqtt_packet);
+                info!("Received parsed packet ({:?}) : {:?} for client: {:?}", self, packet, self.client_info);
+
+                match packet.packet_type {
+                    8 => info!("Subscribe: {:?}", packet.payload),
+                    _ => panic!("unknown packet"),
+                };
             } else {
+                //abort, abort, abort
                 return Ok(Async::Ready(()));
             }
         }
+        //verify if packets returned NotReady
         Ok(Async::NotReady)
     }
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
-        info!("Disconecting");
+        info!("Disconecting: {:?}", self);
     }
 }
 
 impl Client {
     pub fn new(client_info: String, packets: MQTTCodec) -> Self {
+        let (tx, rx) = mpsc::unbounded();
+
+        let connack_buf = Bytes::from(vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]);
+        tx.unbounded_send(connack_buf).unwrap();
+
         Client {
             client_info: client_info,
             packets: packets,
+            rx: rx,
+            tx: tx,
         }
     }
 }
@@ -65,7 +106,31 @@ impl Broker {
 }
 
 #[derive(Debug)]
-pub struct Packet {}
+pub struct Packet {
+    packet_type: u8,
+    flags: u8,
+    payload: BytesMut,
+}
+
+impl Packet {
+    fn new(header: u8, payload: BytesMut) -> Self {
+        let packet_type = header >> 4;
+        let flags = header & 0b0000_1111;
+        Packet { packet_type, flags, payload }
+    }
+
+    fn take_byte(&mut self) -> u8 { self.payload.split_to(1)[0] }
+
+    fn take_string(&mut self) -> Bytes {
+        let length_buf = self.payload.split_to(2);
+        let length = (usize::from(length_buf[0]) << 8) | usize::from(length_buf[1]);
+        if length > self.payload.len() {
+            error!("provided len ({:?}) greater then packet len: {:?}", length, self.payload.len());
+            panic!("invalid packet format");
+        }
+        self.payload.split_to(length).freeze()
+    }
+}
 
 #[derive(Debug)]
 pub struct MQTTCodec {
@@ -83,6 +148,23 @@ impl MQTTCodec {
         }
     }
 
+    fn poll_flush(&mut self) -> Poll<(), io::Error> {
+        while !self.wr.is_empty() {
+            let n = try_ready!(self.stream.poll_write(&self.wr));
+
+            assert!(n > 0);
+
+            self.wr.advance(n);
+        }
+
+        Ok(Async::Ready(()))
+    }
+
+    fn buffer(&mut self, packet: &[u8]) {
+        self.wr.reserve(packet.len());
+        self.wr.put(packet);
+    }
+
     fn fill_read_buf(&mut self) -> Poll<(), io::Error> {
         loop {
             // Ensure the read buffer has capacity.
@@ -97,31 +179,35 @@ impl MQTTCodec {
         }
     }
 
-    fn take_variable_length(&mut self) -> Option<usize> {
+    fn read_variable_length(&mut self) -> usize {
         let mut multiplier = 1;
         let mut value: u32 = 0;
-
+        let mut pos: usize = 0;
         loop {
-            let buf = self.rd.split_to(1);
-            if buf.is_empty() {
-                return None;
-            }
-
-            let encoded_byte = buf[0];
+            let encoded_byte = self.rd[pos];
             value += u32::from(encoded_byte & 127) * multiplier;
             multiplier *= 128;
+            pos = pos + 1;
 
             if encoded_byte & 128 == 0 {
                 break;
             }
 
-            assert!(
-                multiplier <= THRESHOLD,
-                "malformed remaining length {}",
-                multiplier
-            );
+            assert!(multiplier <= THRESHOLD, "malformed remaining length {}", multiplier);
         }
-        Some(value as usize)
+        self.rd.advance(pos);
+        value as usize
+    }
+
+    fn read_header(&mut self) -> u8 {
+        let first_packet = self.rd[0];
+        self.rd.advance(1);
+        first_packet
+    }
+
+    fn read_payload(&mut self) -> BytesMut {
+        let payload_length = self.read_variable_length();
+        self.rd.split_to(payload_length)
     }
 }
 
@@ -134,32 +220,12 @@ impl Stream for MQTTCodec {
         // First, read any new data that might have been received off the socket
         let sock_closed = self.fill_read_buf()?.is_ready();
 
-        if self.rd.len() > 0 {
-            let first_packet = self.rd.split_to(1)[0];
-            let packet_type = first_packet >> 4;
-            let flags = first_packet & 0b0000_1111;
-            let remaining_length = match self.take_variable_length() {
-                None => return Ok(Async::NotReady),
-                Some(i) => i,
-            };
-
-            if self.rd.len() < remaining_length {
-                return Ok(Async::NotReady);
-            }
-
-            let payload = self.rd.split_to(remaining_length);
-
-            info!(
-                "Packet type: {:08b}; flags: {:8b}; remaining length: {:?}; payload: {:?}; buf len: {:?}",
-                packet_type,
-                flags,
-                remaining_length,
-                payload,
-                self.rd.len()
-            );
+        if self.rd.len() > 1 {
+            let header = self.read_header();
+            let payload = self.read_payload();
 
             //return parsed packet
-            Ok(Async::Ready(Some(Packet {})))
+            Ok(Async::Ready(Some(Packet::new(header, payload))))
         } else if sock_closed {
             //closed socket?
             Ok(Async::Ready(None))
@@ -170,9 +236,23 @@ impl Stream for MQTTCodec {
     }
 }
 
-fn handle_new_client((connect, packets): (Option<Packet>, MQTTCodec)) -> Client {
-    //match if ConnectPacket, create client
-    info!("new client connected: {:?}", connect);
+fn parse_connect_packet(mut connect: Packet, packets: MQTTCodec) -> Client {
+    info!("Connect: {:?}", connect);
+
+    if connect.packet_type != 1 {
+        panic!("invalid packet type");
+    }
+
+    let proto_name = connect.take_string();
+    if proto_name != "MQTT" {
+        panic!("invalid proto")
+    }
+
+    let proto_level = connect.take_byte();
+    if proto_level != 4 {
+        panic!("invalid proto level")
+    }
+
     Client::new("client_id".to_string(), packets)
 }
 
@@ -181,16 +261,19 @@ fn handle_error(e: io::Error) {
 }
 
 fn process(socket: TcpStream, broker: Arc<Mutex<Broker>>) -> Box<Future<Item = (), Error = ()> + Send> {
-    info!(
-        "new connection accepted from: {:?} to broker: {:?}",
-        socket.peer_addr(),
-        broker
-    );
+    info!("new connection accepted from: {:?} to broker: {:?}", socket.peer_addr(), broker);
 
     let msg = MQTTCodec::new(socket)
         .into_future()
         .map_err(|(e, _)| e)
-        .and_then(handle_new_client)
+        .and_then(|(connect, packets)| {
+            info!("new client connected: {:?}", connect);
+
+            match connect {
+                Some(connect) => Either::A(parse_connect_packet(connect, packets)),
+                None => Either::B(future::ok(())),
+            }
+        })
         .map_err(handle_error);
 
     Box::new(msg)
