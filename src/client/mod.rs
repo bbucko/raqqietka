@@ -1,7 +1,7 @@
 mod handlers;
 
 use self::handlers::{MQTTPacket, Type};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::sync::mpsc;
 use codec::MQTTCodec;
 use tokio::io;
@@ -13,6 +13,21 @@ type Rx = mpsc::UnboundedReceiver<Bytes>;
 static LINES_PER_TICK: usize = 10;
 
 #[derive(Debug)]
+pub struct Packet {
+    packet_type: u8,
+    flags: u8,
+    payload: BytesMut,
+}
+
+impl Packet {
+    pub fn new(header: u8, payload: BytesMut) -> Self {
+        let packet_type = header >> 4;
+        let flags = header & 0b0000_1111;
+        Packet { packet_type, flags, payload }
+    }
+}
+
+#[derive(Debug)]
 pub struct Client {
     pub packets: MQTTCodec,
     pub client_info: String,
@@ -21,8 +36,8 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(payload: &[u8], packets: MQTTCodec) -> Option<Self> {
-        match handlers::connect(payload) {
+    pub fn new(packet: Packet, packets: MQTTCodec) -> Option<Self> {
+        match handlers::connect(&packet.payload) {
             Ok(Some((client_id, _username, _password, _will))) => Some(Client::create(client_id, packets)),
             _ => None,
         }

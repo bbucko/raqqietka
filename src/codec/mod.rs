@@ -2,7 +2,7 @@ use tokio::net::TcpStream;
 use bytes::{BufMut, BytesMut};
 use tokio::prelude::*;
 use tokio::io;
-use super::Packet;
+use client::Packet;
 
 static THRESHOLD: u32 = 128 * 128 * 128;
 

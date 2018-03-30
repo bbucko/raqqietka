@@ -13,7 +13,6 @@ mod codec;
 use codec::MQTTCodec;
 use client::Client;
 
-use bytes::BytesMut;
 use futures::{Future, Stream};
 use futures::future::{self, Either};
 
@@ -32,21 +31,6 @@ impl Broker {
     }
 }
 
-#[derive(Debug)]
-pub struct Packet {
-    packet_type: u8,
-    flags: u8,
-    payload: BytesMut,
-}
-
-impl Packet {
-    fn new(header: u8, payload: BytesMut) -> Self {
-        let packet_type = header >> 4;
-        let flags = header & 0b0000_1111;
-        Packet { packet_type, flags, payload }
-    }
-}
-
 fn handle_error(e: io::Error) {
     error!("connection error = {:?}", e);
 }
@@ -62,7 +46,7 @@ fn process(socket: TcpStream, broker: Arc<Mutex<Broker>>) -> Box<Future<Item = (
 
             match connect {
                 Some(connect) => {
-                    if let Some(client) = Client::new(&connect.payload, packets) {
+                    if let Some(client) = Client::new(connect, packets) {
                         return Either::A(client);
                     } else {
                         return Either::B(future::ok(()));
