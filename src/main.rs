@@ -1,5 +1,4 @@
 #![deny(warnings)]
-
 extern crate bytes;
 #[macro_use]
 extern crate futures;
@@ -8,8 +7,10 @@ extern crate log;
 extern crate simple_logger;
 extern crate tokio;
 
-use bytes::{BufMut, Bytes, BytesMut};
+mod handlers;
 
+use handlers::{MQTTPacket, Type};
+use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::{self, Either};
 use futures::sync::mpsc;
 use futures::{Future, Stream};
@@ -44,7 +45,7 @@ impl Future for Client {
         for i in 0..LINES_PER_TICK {
             match self.rx.poll().unwrap() {
                 Async::Ready(Some(v)) => {
-                    info!("sending packets: {:?}", v);
+                    debug!("sending packets: {:?}", v);
                     self.packets.buffer(&v);
 
                     //be good to others my dear future ;)
@@ -61,18 +62,50 @@ impl Future for Client {
         while let Async::Ready(packet) = self.packets.poll()? {
             if let Some(packet) = packet {
                 //handle various packets
-                info!("Received parsed packet ({:?}) : {:?} for client: {:?}", self, packet, self.client_info);
+                debug!(
+                    "Received parsed packet: {:?}) :: {:?}; client: {:?}",
+                    packet.packet_type, packet.payload, self.client_info
+                );
 
-                match packet.packet_type {
-                    8 => info!("Subscribe: {:?}", packet.payload),
-                    12 => {
-                        info!("Ping RQ: {:?}", packet);
-                        let ping_resp_buf = Bytes::from(vec![0b1101_0000, 0b0000_0000]);
-                        self.tx.unbounded_send(ping_resp_buf).unwrap();
-                    }
-                    _ => {
-                        error!("unknown packet: {:?}", packet.packet_type);
-                        panic!("unknown packet")
+                let rq = match packet.packet_type {
+                    3 => handlers::publish(&packet.payload, packet.flags),
+                    8 => handlers::subscribe(&packet.payload),
+                    12 => handlers::pingreq(&packet.payload),
+                    14 => handlers::disconnect(&packet.payload),
+                    _ => return Ok(Async::Ready(())),
+                }?;
+                info!("packet: {:?}", rq);
+
+                if let Some(rq) = rq {
+                    let response = match rq.packet {
+                        Type::PUBLISH(Some(packet_identifier), _topic, _qos_level, _payload) => MQTTPacket::puback(packet_identifier),
+                        Type::PUBLISH(None, _topic, 0, _payload) => MQTTPacket::none(),
+                        Type::SUBSCRIBE(packet_identifier, topics) => MQTTPacket::suback(packet_identifier, topics.iter().map(|topic| topic.1).collect()),
+                        Type::PINGREQ => MQTTPacket::pingres(),
+                        //Type::DISCONNECT => codec::MQTTResponse::none(),
+                        _ => MQTTPacket::none(),
+                    };
+                    info!("{:?}", response);
+
+                    match response.packet {
+                        Type::PUBACK(packet_identifier) => {
+                            self.tx.unbounded_send(Bytes::from(vec![0b0100_0000, 0b0000_0010])).unwrap();
+                            self.tx
+                                .unbounded_send(Bytes::from(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]))
+                                .unwrap();
+                        }
+                        Type::SUBACK(packet_identifier, qos) => {
+                            info!("packet_identifier: {:?}, qos: {:?}", packet_identifier, qos);
+                            self.tx.unbounded_send(Bytes::from(vec![0b1001_0000, 0b0000_0010])).unwrap();
+                            self.tx
+                                .unbounded_send(Bytes::from(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]))
+                                .unwrap();
+                            self.tx.unbounded_send(Bytes::from(qos)).unwrap();
+                        }
+                        Type::PINGRES => self.tx.unbounded_send(Bytes::from(vec![1])).unwrap(),
+                        Type::NONE => return Ok(Async::NotReady),
+                        Type::DISCONNECT => return Ok(Async::Ready(())),
+                        _ => return Ok(Async::Ready(())),
                     }
                 };
             } else {
@@ -94,9 +127,7 @@ impl Drop for Client {
 impl Client {
     pub fn new(client_info: String, packets: MQTTCodec) -> Self {
         let (tx, rx) = mpsc::unbounded();
-
-        tx.unbounded_send(Bytes::from(vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]))
-            .unwrap();
+        tx.unbounded_send(Bytes::from(vec![0b0010_0000, 0b0000_0000])).unwrap();
 
         Client {
             client_info: client_info,
@@ -128,20 +159,6 @@ impl Packet {
         let packet_type = header >> 4;
         let flags = header & 0b0000_1111;
         Packet { packet_type, flags, payload }
-    }
-
-    fn take_byte(&mut self) -> u8 {
-        self.payload.split_to(1)[0]
-    }
-
-    fn take_string(&mut self) -> Bytes {
-        let length_buf = self.payload.split_to(2);
-        let length = (usize::from(length_buf[0]) << 8) | usize::from(length_buf[1]);
-        if length > self.payload.len() {
-            error!("provided len ({:?}) greater then packet len: {:?}", length, self.payload.len());
-            panic!("invalid packet format");
-        }
-        self.payload.split_to(length).freeze()
     }
 }
 
@@ -195,12 +212,12 @@ impl MQTTCodec {
     fn read_variable_length(&mut self) -> usize {
         let mut multiplier = 1;
         let mut value: u32 = 0;
-        let mut pos: usize = 0;
         loop {
-            let encoded_byte = self.rd[pos];
+            let encoded_byte = self.rd[0];
+            self.rd.advance(1);
+
             value += u32::from(encoded_byte & 127) * multiplier;
             multiplier *= 128;
-            pos = pos + 1;
 
             if encoded_byte & 128 == 0 {
                 break;
@@ -208,14 +225,12 @@ impl MQTTCodec {
 
             assert!(multiplier <= THRESHOLD, "malformed remaining length {}", multiplier);
         }
-        self.rd.advance(pos);
+
         value as usize
     }
 
     fn read_header(&mut self) -> u8 {
-        let first_packet = self.rd[0];
-        self.rd.advance(1);
-        first_packet
+        self.rd.split_to(1)[0]
     }
 
     fn read_payload(&mut self) -> BytesMut {
@@ -249,24 +264,11 @@ impl Stream for MQTTCodec {
     }
 }
 
-fn parse_connect_packet(mut connect: Packet, packets: MQTTCodec) -> Client {
-    info!("Connect: {:?}", connect);
-
-    if connect.packet_type != 1 {
-        panic!("invalid packet type");
+fn parse_connect_packet(connect: Packet, packets: MQTTCodec) -> Option<Client> {
+    match handlers::connect(&connect.payload) {
+        Ok(Some((client_id, _username, _password, _will))) => Some(Client::new(client_id, packets)),
+        _ => None,
     }
-
-    let proto_name = connect.take_string();
-    if proto_name != "MQTT" {
-        panic!("invalid proto")
-    }
-
-    let proto_level = connect.take_byte();
-    if proto_level != 4 {
-        panic!("invalid proto level")
-    }
-
-    Client::new("client_id".to_string(), packets)
 }
 
 fn handle_error(e: io::Error) {
@@ -283,7 +285,13 @@ fn process(socket: TcpStream, broker: Arc<Mutex<Broker>>) -> Box<Future<Item = (
             info!("new client connected: {:?}", connect);
 
             match connect {
-                Some(connect) => Either::A(parse_connect_packet(connect, packets)),
+                Some(connect) => {
+                    if let Some(client) = parse_connect_packet(connect, packets) {
+                        return Either::A(client);
+                    } else {
+                        return Either::B(future::ok(()));
+                    }
+                }
                 None => Either::B(future::ok(())),
             }
         })

@@ -10,6 +10,65 @@ pub type Result<T> = result::Result<T, Error>;
 
 struct Errors;
 
+#[derive(Debug)]
+pub enum Type {
+    PUBLISH(Option<u16>, String, u8, Vec<u8>),
+    PUBACK(u16),
+    SUBSCRIBE(u16, Vec<(String, u8)>),
+    SUBACK(u16, Vec<u8>),
+    PINGREQ,
+    PINGRES,
+    DISCONNECT,
+    NONE,
+}
+
+#[derive(Debug)]
+pub struct MQTTPacket {
+    pub packet: Type,
+}
+
+impl MQTTPacket {
+    pub fn publish(packet_identifier: Option<u16>, topic: String, qos_level: u8, payload: Vec<u8>) -> MQTTPacket {
+        MQTTPacket {
+            packet: Type::PUBLISH(packet_identifier, topic, qos_level, payload),
+        }
+    }
+
+    pub fn subscribe(packet_identifier: u16, topics: Vec<(String, u8)>) -> MQTTPacket {
+        MQTTPacket {
+            packet: Type::SUBSCRIBE(packet_identifier, topics),
+        }
+    }
+
+    pub fn pingreq() -> MQTTPacket {
+        MQTTPacket { packet: Type::PINGREQ }
+    }
+
+    pub fn disconnect() -> MQTTPacket {
+        MQTTPacket { packet: Type::DISCONNECT }
+    }
+
+    pub fn puback(packet_identifier: u16) -> MQTTPacket {
+        MQTTPacket {
+            packet: Type::PUBACK(packet_identifier),
+        }
+    }
+
+    pub fn suback(packet_identifier: u16, qos: Vec<u8>) -> MQTTPacket {
+        MQTTPacket {
+            packet: Type::SUBACK(packet_identifier, qos),
+        }
+    }
+
+    pub fn pingres() -> MQTTPacket {
+        MQTTPacket { packet: Type::PINGRES }
+    }
+
+    pub fn none() -> MQTTPacket {
+        MQTTPacket { packet: Type::NONE }
+    }
+}
+
 impl Errors {
     fn custom(error_message: String) -> Error {
         Error::new(io::ErrorKind::Other, error_message)
@@ -28,22 +87,19 @@ impl Errors {
     }
 }
 
-pub fn connect(payload: &[u8]) -> Result<Option<super::MQTTPacket>> {
+pub fn connect(payload: &[u8]) -> Result<Option<(String, Option<String>, Option<String>, Option<(String, String, u8)>)>> {
     trace!("CONNECT payload {:?}", payload);
     let mut iter = payload.iter();
 
     let proto_name = take_string(&mut iter)?;
     if proto_name != "MQTT" {
-        return Err(Errors::custom(
-            format!("Invalid protocol name: {}", proto_name),
-        ));
+        error!("Invalid protocol name: {}", proto_name);
+        return Err(Errors::custom(format!("Invalid protocol name: {}", proto_name)));
     }
 
     let proto_level = take_one_byte(&mut iter)?;
     if proto_level != 4 {
-        return Err(Errors::custom(
-            format!("Invalid protocol version: {}", proto_level),
-        ));
+        return Err(Errors::custom(format!("Invalid protocol version: {}", proto_level)));
     }
 
     let connect_flags = take_one_byte(&mut iter)?;
@@ -51,27 +107,19 @@ pub fn connect(payload: &[u8]) -> Result<Option<super::MQTTPacket>> {
     let client_id = take_string(&mut iter)?;
 
     let will = if is_flag_set(connect_flags, 2) {
-        Some((take_string(&mut iter)?, take_string(&mut iter)?, (connect_flags & 0b0001_1000) >> 4, ))
+        Some((take_string(&mut iter)?, take_string(&mut iter)?, (connect_flags & 0b0001_1000) >> 4))
     } else {
         None
     };
 
-    let username = if is_flag_set(connect_flags, 7) {
-        Some(take_string(&mut iter)?)
-    } else {
-        None
-    };
-    let password = if is_flag_set(connect_flags, 6) {
-        Some(take_string(&mut iter)?)
-    } else {
-        None
-    };
+    let username = if is_flag_set(connect_flags, 7) { Some(take_string(&mut iter)?) } else { None };
+    let password = if is_flag_set(connect_flags, 6) { Some(take_string(&mut iter)?) } else { None };
 
     info!("connected client_id: {:?}, username: {:?}, pwd: {:?}", client_id, username, password);
-    Ok(Some(super::MQTTPacket::connect(client_id, username, password, will)))
+    Ok(Some((client_id, username, password, will)))
 }
 
-pub fn publish(payload: &[u8], flags: u8) -> Result<Option<super::MQTTPacket>> {
+pub fn publish(payload: &[u8], flags: u8) -> Result<Option<MQTTPacket>> {
     trace!("PUBLISH payload {:?}", payload);
     let mut iter = payload.iter();
 
@@ -87,20 +135,23 @@ pub fn publish(payload: &[u8], flags: u8) -> Result<Option<super::MQTTPacket>> {
             let msg = take_payload(&mut iter);
             info!("publishing payload: {:?} on topic: '{}'", msg, topic_name);
 
-            Ok(Some(super::MQTTPacket::publish(None, topic_name, qos_level, msg)))
+            Ok(Some(MQTTPacket::publish(None, topic_name, qos_level, msg)))
         }
         1 | 2 => {
             let packet_identifier = take_two_bytes(&mut iter)?;
             let msg = take_payload(&mut iter);
-            info!("publishing payload: {:?} on topic: '{}' in response to packet_id: {}", msg, topic_name, packet_identifier);
+            info!(
+                "publishing payload: {:?} on topic: '{}' in response to packet_id: {}",
+                msg, topic_name, packet_identifier
+            );
 
-            Ok(Some(super::MQTTPacket::publish(Some(packet_identifier), topic_name, qos_level, msg)))
+            Ok(Some(MQTTPacket::publish(Some(packet_identifier), topic_name, qos_level, msg)))
         }
         _ => Err(Errors::invalid_qos()),
     }
 }
 
-pub fn subscribe(payload: &[u8]) -> Result<Option<super::MQTTPacket>> {
+pub fn subscribe(payload: &[u8]) -> Result<Option<MQTTPacket>> {
     trace!("SUBSCRIBE payload {:?}", payload);
     let mut iter = payload.iter();
 
@@ -122,19 +173,19 @@ pub fn subscribe(payload: &[u8]) -> Result<Option<super::MQTTPacket>> {
     }
 
     info!("Responding to packet id: {}", packet_identifier);
-    Ok(Some(super::MQTTPacket::subscribe(packet_identifier, topics)))
+    Ok(Some(MQTTPacket::subscribe(packet_identifier, topics)))
 }
 
-pub fn pingreq(payload: &[u8]) -> Result<Option<super::MQTTPacket>> {
+pub fn pingreq(payload: &[u8]) -> Result<Option<MQTTPacket>> {
     trace!("PINGREQ payload {:?}", payload);
 
-    Ok(Some(super::MQTTPacket::pingreq()))
+    Ok(Some(MQTTPacket::pingreq()))
 }
 
-pub fn disconnect(payload: &[u8]) -> Result<Option<super::MQTTPacket>> {
+pub fn disconnect(payload: &[u8]) -> Result<Option<MQTTPacket>> {
     trace!("DISCONNECT payload {:?}", payload);
 
-    Ok(Some(super::MQTTPacket::disconnect()))
+    Ok(Some(MQTTPacket::disconnect()))
 }
 
 fn take_string(payload: &mut slice::Iter<u8>) -> Result<string::String> {
@@ -147,13 +198,10 @@ fn take_string(payload: &mut slice::Iter<u8>) -> Result<string::String> {
 }
 
 fn take_string_of_length(payload: &mut slice::Iter<u8>, length: usize) -> Result<String> {
-    let string_vector = payload
-        .take(length)
-        .cloned()
-        .collect::<Vec<u8>>();
+    let string_vector = payload.take(length).cloned().collect::<Vec<u8>>();
     match string_vector.len() {
         x if x == length => string::String::from_utf8(string_vector).map_err(|_| Errors::malformed_utf8()),
-        _ => Err(Errors::malformed_packet())
+        _ => Err(Errors::malformed_packet()),
     }
 }
 
@@ -181,22 +229,24 @@ fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    // use test::Bencher;
+    use bytes::BytesMut;
     use super::*;
-    use super::super::*;
-//    use test::Bencher;
 
     #[test]
     fn test_parse_connect_with_client_id_only() {
-        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99, ])) {
-            Ok(Some(MQTTPacket { packet: Type::CONNECT(client_id, None, None, None) })) => assert_eq!(client_id, "abc"),
+        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
+            Ok(Some((client_id, None, None, None))) => assert_eq!(client_id, "abc"),
             _ => assert!(false),
         }
     }
 
     #[test]
     fn test_parse_connect_with_client_id_and_username_and_password() {
-        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100, ])) {
-            Ok(Some(MQTTPacket { packet: Type::CONNECT(client_id, Some(a), Some(b), None) })) => {
+        match connect(&mut BytesMut::from(vec![
+            0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100
+        ])) {
+            Ok(Some((client_id, Some(a), Some(b), None))) => {
                 assert_eq!(client_id, "abc");
                 assert_eq!(a, "username");
                 assert_eq!(b, "password");
@@ -207,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_parse_connect_invalid_proto() {
-        match connect(&mut BytesMut::from(vec![0, 4, 97, 98, 99, 100, 4, 2, 0, 60, 0, 3, 97, 98, 99, ])) {
+        match connect(&mut BytesMut::from(vec![0, 4, 97, 98, 99, 100, 4, 2, 0, 60, 0, 3, 97, 98, 99])) {
             Err(err) => assert_eq!(err.to_string(), "Invalid protocol name: abcd"),
             _ => assert!(false),
         }
@@ -215,7 +265,7 @@ mod tests {
 
     #[test]
     fn test_parse_connect_invalid_version() {
-        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 1, 2, 0, 60, 0, 3, 97, 98, 99, ])) {
+        match connect(&mut BytesMut::from(vec![0, 4, 77, 81, 84, 84, 1, 2, 0, 60, 0, 3, 97, 98, 99])) {
             Err(err) => assert_eq!(err.to_string(), "Invalid protocol version: 1"),
             _ => assert!(false),
         }
@@ -223,8 +273,13 @@ mod tests {
 
     #[test]
     fn test_parse_publish_qos0() {
-        match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99, ]), 0b00000000) {
-            Ok(Some(MQTTPacket { packet: Type::PUBLISH(None, topic, qos_level, payload) })) => {
+        match publish(
+            &mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 97, 98, 99]),
+            0b00000000,
+        ) {
+            Ok(Some(MQTTPacket {
+                packet: Type::PUBLISH(None, topic, qos_level, payload),
+            })) => {
                 assert_eq!(topic, "/something");
                 assert_eq!(qos_level, 0);
                 assert_eq!(payload, Vec::from("abc"));
@@ -235,8 +290,13 @@ mod tests {
 
     #[test]
     fn test_parse_publish_qos1() {
-        match publish(&mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99, ]), 0b00000010) {
-            Ok(Some(MQTTPacket { packet: Type::PUBLISH(Some(packet_id), topic, qos_level, payload) })) => {
+        match publish(
+            &mut BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99]),
+            0b00000010,
+        ) {
+            Ok(Some(MQTTPacket {
+                packet: Type::PUBLISH(Some(packet_id), topic, qos_level, payload),
+            })) => {
                 assert_eq!(packet_id, 1);
                 assert_eq!(topic, "/something");
                 assert_eq!(qos_level, 1);
@@ -249,7 +309,9 @@ mod tests {
     #[test]
     fn test_parse_subscribe() {
         match subscribe(&mut BytesMut::from(vec![0, 1, 0, 1, 97, 0, 0, 3, 97, 98, 99, 1])) {
-            Ok(Some(MQTTPacket { packet: Type::SUBSCRIBE(packet_id, topics) })) => {
+            Ok(Some(MQTTPacket {
+                packet: Type::SUBSCRIBE(packet_id, topics),
+            })) => {
                 assert_eq!(packet_id, 1);
                 assert_eq!(topics.len(), 2);
 
@@ -302,27 +364,25 @@ mod tests {
         }
     }
 
-//    #[bench]
-//    fn bench_publish(b: &mut Bencher) {
-//        let payload = BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99, ]);
-//        b.iter(|| {
-//            publish(&payload, 0)
-//        })
-//    }
-//
-//    #[bench]
-//    fn bench_connect(b: &mut Bencher) {
-//        let payload = BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100, ]);
-//        b.iter(|| {
-//            connect(&payload)
-//        })
-//    }
-//
-//    #[bench]
-//    fn bench_subscribe(b: &mut Bencher) {
-//        let payload = BytesMut::from(vec![0, 1, 0, 1, 97, 0, 0, 3, 97, 98, 99, 1]);
-//        b.iter(|| {
-//            subscribe(&payload)
-//        })
-//    }
+    // #[bench]
+    // fn bench_publish(b: &mut Bencher) {
+    //     let payload = BytesMut::from(vec![0, 10, 47, 115, 111, 109, 101, 116, 104, 105, 110, 103, 0, 1, 97, 98, 99]);
+    //     b.iter(|| publish(&payload, 0))
+    // }
+    //
+    //    #[bench]
+    //    fn bench_connect(b: &mut Bencher) {
+    //        let payload = BytesMut::from(vec![0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 3, 97, 98, 99, 0, 8, 117, 115, 101, 114, 110, 97, 109, 101, 0, 8, 112, 97, 115, 115, 119, 111, 114, 100, ]);
+    //        b.iter(|| {
+    //            connect(&payload)
+    //        })
+    //    }
+    //
+    //    #[bench]
+    //    fn bench_subscribe(b: &mut Bencher) {
+    //        let payload = BytesMut::from(vec![0, 1, 0, 1, 97, 0, 0, 3, 97, 98, 99, 1]);
+    //        b.iter(|| {
+    //            subscribe(&payload)
+    //        })
+    //    }
 }
