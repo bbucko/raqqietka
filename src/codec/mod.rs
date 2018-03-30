@@ -75,9 +75,7 @@ impl MQTT {
     }
 
     fn read_header(&mut self) -> u8 {
-        let buf = self.rd[0];
-        self.rd.advance(1);
-        buf
+        self.rd.split_to(1)[0]
     }
 
     fn read_payload(&mut self) -> BytesMut {
@@ -96,11 +94,8 @@ impl Stream for MQTT {
         let sock_closed = self.fill_read_buf()?.is_ready();
 
         if self.rd.len() > 1 {
-            let header = self.read_header();
-            let payload = self.read_payload();
-
             //return parsed packet
-            Ok(Async::Ready(Some(Packet::new(header, payload))))
+            Ok(Async::Ready(Some(Packet::new(self.read_header(), self.read_payload()))))
         } else if sock_closed {
             //closed socket?
             Ok(Async::Ready(None))

@@ -6,9 +6,12 @@ use futures::sync::mpsc;
 use codec::MQTT as Codec;
 use tokio::io;
 use tokio::prelude::*;
+use super::Broker;
+use std::sync::{Arc, Mutex};
 
 type Tx = mpsc::UnboundedSender<Bytes>;
 type Rx = mpsc::UnboundedReceiver<Bytes>;
+type SharedBroker = Arc<Mutex<Broker>>;
 
 static LINES_PER_TICK: usize = 10;
 
@@ -29,26 +32,28 @@ impl Packet {
 
 #[derive(Debug)]
 pub struct Client {
-    pub packets: Codec,
-    pub client_info: String,
+    broker: SharedBroker,
+    packets: Codec,
+    client_info: String,
     rx: Rx,
     tx: Tx,
 }
 
 impl Client {
-    pub fn new(packet: Packet, packets: Codec) -> Option<Self> {
+    pub fn new(packet: Packet, packets: Codec, broker: SharedBroker) -> Option<Self> {
         match handlers::connect(&packet.payload) {
-            Ok(Some((client_id, _username, _password, _will))) => Some(Client::create(client_id, packets)),
+            Ok(Some((client_id, _username, _password, _will))) => Some(Client::create(client_id, packets, broker)),
             _ => None,
         }
     }
 
-    fn create(client_info: String, packets: Codec) -> Self {
+    fn create(client_info: String, packets: Codec, broker: SharedBroker) -> Self {
         let (tx, rx) = mpsc::unbounded();
-        tx.unbounded_send(Bytes::from(vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]))
-            .unwrap();
+
+        broker.lock().unwrap().register_client(client_info.clone(), &tx);
 
         Client {
+            broker: broker,
             client_info: client_info,
             packets: packets,
             rx: rx,

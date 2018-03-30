@@ -9,27 +9,19 @@ extern crate tokio;
 
 mod client;
 mod codec;
+mod broker;
 
 use codec::MQTT as Codec;
 use client::Client;
+use broker::Broker;
 
 use futures::{Future, Stream};
 use futures::future::{self, Either};
 
 use log::LogLevel;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
-
-#[derive(Debug)]
-pub struct Broker {}
-
-impl Broker {
-    pub fn new() -> Broker {
-        Broker {}
-    }
-}
 
 fn handle_error(e: io::Error) {
     error!("connection error = {:?}", e);
@@ -46,7 +38,7 @@ fn process(socket: TcpStream, broker: Arc<Mutex<Broker>>) -> Box<Future<Item = (
 
             match connect {
                 Some(connect) => {
-                    if let Some(client) = Client::new(connect, packets) {
+                    if let Some(client) = Client::new(connect, packets, broker) {
                         return Either::A(client);
                     } else {
                         return Either::B(future::ok(()));
