@@ -3,7 +3,7 @@ mod handlers;
 use self::handlers::{MQTTPacket, Type};
 use bytes::{Bytes, BytesMut};
 use futures::sync::mpsc;
-use codec::MQTTCodec;
+use codec::MQTT as Codec;
 use tokio::io;
 use tokio::prelude::*;
 
@@ -29,21 +29,21 @@ impl Packet {
 
 #[derive(Debug)]
 pub struct Client {
-    pub packets: MQTTCodec,
+    pub packets: Codec,
     pub client_info: String,
     rx: Rx,
     tx: Tx,
 }
 
 impl Client {
-    pub fn new(packet: Packet, packets: MQTTCodec) -> Option<Self> {
+    pub fn new(packet: Packet, packets: Codec) -> Option<Self> {
         match handlers::connect(&packet.payload) {
             Ok(Some((client_id, _username, _password, _will))) => Some(Client::create(client_id, packets)),
             _ => None,
         }
     }
 
-    fn create(client_info: String, packets: MQTTCodec) -> Self {
+    fn create(client_info: String, packets: Codec) -> Self {
         let (tx, rx) = mpsc::unbounded();
         tx.unbounded_send(Bytes::from(vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]))
             .unwrap();

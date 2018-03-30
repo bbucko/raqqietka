@@ -7,15 +7,15 @@ use client::Packet;
 static THRESHOLD: u32 = 128 * 128 * 128;
 
 #[derive(Debug)]
-pub struct MQTTCodec {
+pub struct MQTT {
     stream: TcpStream,
     rd: BytesMut,
     wr: BytesMut,
 }
 
-impl MQTTCodec {
+impl MQTT {
     pub fn new(stream: TcpStream) -> Self {
-        MQTTCodec {
+        Self {
             stream: stream,
             rd: BytesMut::new(),
             wr: BytesMut::new(),
@@ -56,12 +56,13 @@ impl MQTTCodec {
     fn read_variable_length(&mut self) -> usize {
         let mut multiplier = 1;
         let mut value: u32 = 0;
+        let mut pos = 0;
         loop {
-            let encoded_byte = self.rd[0];
-            self.rd.advance(1);
+            let encoded_byte = self.rd[pos];
 
             value += u32::from(encoded_byte & 127) * multiplier;
             multiplier *= 128;
+            pos = pos + 1;
 
             if encoded_byte & 128 == 0 {
                 break;
@@ -69,12 +70,14 @@ impl MQTTCodec {
 
             assert!(multiplier <= THRESHOLD, "malformed remaining length {}", multiplier);
         }
-
+        self.rd.advance(pos);
         value as usize
     }
 
     fn read_header(&mut self) -> u8 {
-        self.rd.split_to(1)[0]
+        let buf = self.rd[0];
+        self.rd.advance(1);
+        buf
     }
 
     fn read_payload(&mut self) -> BytesMut {
@@ -83,7 +86,7 @@ impl MQTTCodec {
     }
 }
 
-impl Stream for MQTTCodec {
+impl Stream for MQTT {
     type Item = Packet;
     type Error = io::Error;
 

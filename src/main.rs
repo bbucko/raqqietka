@@ -10,7 +10,7 @@ extern crate tokio;
 mod client;
 mod codec;
 
-use codec::MQTTCodec;
+use codec::MQTT as Codec;
 use client::Client;
 
 use futures::{Future, Stream};
@@ -38,7 +38,7 @@ fn handle_error(e: io::Error) {
 fn process(socket: TcpStream, broker: Arc<Mutex<Broker>>) -> Box<Future<Item = (), Error = ()> + Send> {
     info!("new connection accepted from: {:?} to broker: {:?}", socket.peer_addr(), broker);
 
-    let msg = MQTTCodec::new(socket)
+    let msg = Codec::new(socket)
         .into_future()
         .map_err(|(e, _)| e)
         .and_then(|(connect, packets)| {
