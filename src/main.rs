@@ -41,9 +41,10 @@ impl Future for Client {
 
     fn poll(&mut self) -> Poll<(), io::Error> {
         debug!("flush outbound queue: {:?}", self.rx);
-        for i in 0 .. LINES_PER_TICK {
+        for i in 0..LINES_PER_TICK {
             match self.rx.poll().unwrap() {
                 Async::Ready(Some(v)) => {
+                    info!("sending packets: {:?}", v);
                     self.packets.buffer(&v);
 
                     //be good to others my dear future ;)
@@ -64,7 +65,15 @@ impl Future for Client {
 
                 match packet.packet_type {
                     8 => info!("Subscribe: {:?}", packet.payload),
-                    _ => panic!("unknown packet"),
+                    12 => {
+                        info!("Ping RQ: {:?}", packet);
+                        let ping_resp_buf = Bytes::from(vec![0b1101_0000, 0b0000_0000]);
+                        self.tx.unbounded_send(ping_resp_buf).unwrap();
+                    }
+                    _ => {
+                        error!("unknown packet: {:?}", packet.packet_type);
+                        panic!("unknown packet")
+                    }
                 };
             } else {
                 //abort, abort, abort
@@ -86,8 +95,8 @@ impl Client {
     pub fn new(client_info: String, packets: MQTTCodec) -> Self {
         let (tx, rx) = mpsc::unbounded();
 
-        let connack_buf = Bytes::from(vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]);
-        tx.unbounded_send(connack_buf).unwrap();
+        tx.unbounded_send(Bytes::from(vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]))
+            .unwrap();
 
         Client {
             client_info: client_info,
@@ -102,7 +111,9 @@ impl Client {
 pub struct Broker {}
 
 impl Broker {
-    pub fn new() -> Broker { Broker {} }
+    pub fn new() -> Broker {
+        Broker {}
+    }
 }
 
 #[derive(Debug)]
@@ -119,7 +130,9 @@ impl Packet {
         Packet { packet_type, flags, payload }
     }
 
-    fn take_byte(&mut self) -> u8 { self.payload.split_to(1)[0] }
+    fn take_byte(&mut self) -> u8 {
+        self.payload.split_to(1)[0]
+    }
 
     fn take_string(&mut self) -> Bytes {
         let length_buf = self.payload.split_to(2);
