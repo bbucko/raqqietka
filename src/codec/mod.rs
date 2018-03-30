@@ -2,7 +2,6 @@ use tokio::net::TcpStream;
 use bytes::{BufMut, BytesMut};
 use tokio::prelude::*;
 use tokio::io;
-use client::Packet;
 
 static THRESHOLD: u32 = 128 * 128 * 128;
 
@@ -11,6 +10,21 @@ pub struct MQTT {
     stream: TcpStream,
     rd: BytesMut,
     wr: BytesMut,
+}
+
+#[derive(Debug)]
+pub struct Packet {
+    pub packet_type: u8,
+    pub flags: u8,
+    pub payload: BytesMut,
+}
+
+impl Packet {
+    pub fn new(header: u8, payload: BytesMut) -> Self {
+        let packet_type = header >> 4;
+        let flags = header & 0b0000_1111;
+        Packet { packet_type, flags, payload }
+    }
 }
 
 impl MQTT {

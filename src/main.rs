@@ -12,7 +12,6 @@ mod codec;
 mod broker;
 
 use codec::MQTT as Codec;
-use client::Client;
 use broker::Broker;
 
 use futures::{Future, Stream};
@@ -33,12 +32,12 @@ fn process(socket: TcpStream, broker: Arc<Mutex<Broker>>) -> Box<Future<Item = (
     let msg = Codec::new(socket)
         .into_future()
         .map_err(|(e, _)| e)
-        .and_then(|(connect, packets)| {
+        .and_then(move |(connect, packets)| {
             info!("new client connected: {:?}", connect);
-
+            let mut broker = broker.lock().unwrap();
             match connect {
                 Some(connect) => {
-                    if let Some(client) = Client::new(connect, packets, broker) {
+                    if let Some(client) = broker.register(connect, packets) {
                         return Either::A(client);
                     } else {
                         return Either::B(future::ok(()));

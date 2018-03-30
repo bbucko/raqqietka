@@ -1,68 +1,46 @@
 mod handlers;
 
 use self::handlers::{MQTTPacket, Type};
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::sync::mpsc;
-use codec::MQTT as Codec;
+use codec::{MQTT as Codec, Packet};
 use tokio::io;
 use tokio::prelude::*;
-use super::Broker;
-use std::sync::{Arc, Mutex};
 
 type Tx = mpsc::UnboundedSender<Bytes>;
 type Rx = mpsc::UnboundedReceiver<Bytes>;
-type SharedBroker = Arc<Mutex<Broker>>;
 
 static LINES_PER_TICK: usize = 10;
 
 #[derive(Debug)]
-pub struct Packet {
-    packet_type: u8,
-    flags: u8,
-    payload: BytesMut,
-}
-
-impl Packet {
-    pub fn new(header: u8, payload: BytesMut) -> Self {
-        let packet_type = header >> 4;
-        let flags = header & 0b0000_1111;
-        Packet { packet_type, flags, payload }
-    }
-}
-
-#[derive(Debug)]
 pub struct Client {
-    broker: SharedBroker,
     packets: Codec,
-    client_info: String,
+    pub client_info: String,
     rx: Rx,
-    tx: Tx,
+    pub tx: Tx,
 }
 
 impl Client {
-    pub fn new(packet: Packet, packets: Codec, broker: SharedBroker) -> Option<Self> {
+    pub fn new(packet: Packet, packets: Codec) -> Option<Self> {
         match handlers::connect(&packet.payload) {
-            Ok(Some((client_id, _username, _password, _will))) => Some(Client::create(client_id, packets, broker)),
+            Ok(Some((client_id, _username, _password, _will))) => Some(Client::create(client_id, packets)),
             _ => None,
-        }
-    }
-
-    fn create(client_info: String, packets: Codec, broker: SharedBroker) -> Self {
-        let (tx, rx) = mpsc::unbounded();
-
-        broker.lock().unwrap().register_client(client_info.clone(), &tx);
-
-        Client {
-            broker: broker,
-            client_info: client_info,
-            packets: packets,
-            rx: rx,
-            tx: tx,
         }
     }
 
     fn response(&mut self, bytes: Vec<u8>) {
         self.tx.unbounded_send(Bytes::from(bytes)).unwrap();
+    }
+
+    fn create(client_info: String, packets: Codec) -> Self {
+        let (tx, rx) = mpsc::unbounded();
+
+        Self {
+            client_info: client_info,
+            packets: packets,
+            rx: rx,
+            tx: tx,
+        }
     }
 }
 
