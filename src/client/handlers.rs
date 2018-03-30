@@ -7,6 +7,7 @@ use std::string;
 
 pub type Error = io::Error;
 pub type Result<T> = result::Result<T, Error>;
+pub type Rs = Result<Option<MQTTPacket>>;
 
 struct Errors;
 
@@ -99,6 +100,7 @@ pub fn connect(payload: &[u8]) -> Result<Option<(String, Option<String>, Option<
 
     let proto_level = take_one_byte(&mut iter)?;
     if proto_level != 4 {
+        error!("Invalid protocol level: {}", proto_level);
         return Err(Errors::custom(format!("Invalid protocol version: {}", proto_level)));
     }
 
@@ -115,18 +117,18 @@ pub fn connect(payload: &[u8]) -> Result<Option<(String, Option<String>, Option<
     let username = if is_flag_set(connect_flags, 7) { Some(take_string(&mut iter)?) } else { None };
     let password = if is_flag_set(connect_flags, 6) { Some(take_string(&mut iter)?) } else { None };
 
-    info!("connected client_id: {:?}, username: {:?}, pwd: {:?}", client_id, username, password);
+    info!("connected client_id: {:?}; username: {:?}; pwd: {:?}", client_id, username, password);
     Ok(Some((client_id, username, password, will)))
 }
 
-pub fn publish(payload: &[u8], flags: u8) -> Result<Option<MQTTPacket>> {
+pub fn publish(payload: &[u8], flags: u8) -> Rs {
     trace!("PUBLISH payload {:?}", payload);
     let mut iter = payload.iter();
 
     let dup = is_flag_set(flags, 3);
     let retain = is_flag_set(flags, 0);
     let qos_level = (flags >> 1) & 0b0000_0011;
-    info!("dup: {} retain: {} qos_level: {}", dup, retain, qos_level);
+    info!("dup: {}; retain: {}; qos_level: {}", dup, retain, qos_level);
 
     let topic_name = take_string(&mut iter)?;
 
@@ -151,7 +153,7 @@ pub fn publish(payload: &[u8], flags: u8) -> Result<Option<MQTTPacket>> {
     }
 }
 
-pub fn subscribe(payload: &[u8]) -> Result<Option<MQTTPacket>> {
+pub fn subscribe(payload: &[u8]) -> Rs {
     trace!("SUBSCRIBE payload {:?}", payload);
     let mut iter = payload.iter();
 
@@ -176,13 +178,13 @@ pub fn subscribe(payload: &[u8]) -> Result<Option<MQTTPacket>> {
     Ok(Some(MQTTPacket::subscribe(packet_identifier, topics)))
 }
 
-pub fn pingreq(payload: &[u8]) -> Result<Option<MQTTPacket>> {
+pub fn pingreq(payload: &[u8]) -> Rs {
     trace!("PINGREQ payload {:?}", payload);
 
     Ok(Some(MQTTPacket::pingreq()))
 }
 
-pub fn disconnect(payload: &[u8]) -> Result<Option<MQTTPacket>> {
+pub fn disconnect(payload: &[u8]) -> Rs {
     trace!("DISCONNECT payload {:?}", payload);
 
     Ok(Some(MQTTPacket::disconnect()))
