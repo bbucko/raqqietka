@@ -41,13 +41,9 @@ impl MQTTPacket {
         }
     }
 
-    pub fn pingreq() -> MQTTPacket {
-        MQTTPacket { packet: Type::PINGREQ }
-    }
+    pub fn pingreq() -> MQTTPacket { MQTTPacket { packet: Type::PINGREQ } }
 
-    pub fn disconnect() -> MQTTPacket {
-        MQTTPacket { packet: Type::DISCONNECT }
-    }
+    pub fn disconnect() -> MQTTPacket { MQTTPacket { packet: Type::DISCONNECT } }
 
     pub fn puback(packet_identifier: u16) -> MQTTPacket {
         MQTTPacket {
@@ -61,31 +57,19 @@ impl MQTTPacket {
         }
     }
 
-    pub fn pingres() -> MQTTPacket {
-        MQTTPacket { packet: Type::PINGRES }
-    }
+    pub fn pingres() -> MQTTPacket { MQTTPacket { packet: Type::PINGRES } }
 
-    pub fn none() -> MQTTPacket {
-        MQTTPacket { packet: Type::NONE }
-    }
+    pub fn none() -> MQTTPacket { MQTTPacket { packet: Type::NONE } }
 }
 
 impl Errors {
-    fn custom(error_message: String) -> Error {
-        Error::new(io::ErrorKind::Other, error_message)
-    }
+    fn custom(error_message: String) -> Error { Error::new(io::ErrorKind::Other, error_message) }
 
-    fn malformed_packet() -> Error {
-        Error::new(io::ErrorKind::Other, "malformed packet")
-    }
+    fn malformed_packet() -> Error { Error::new(io::ErrorKind::Other, "malformed packet") }
 
-    fn malformed_utf8() -> Error {
-        Error::new(io::ErrorKind::Other, "malformed UTF-8")
-    }
+    fn malformed_utf8() -> Error { Error::new(io::ErrorKind::Other, "malformed UTF-8") }
 
-    fn invalid_qos() -> Error {
-        Error::new(io::ErrorKind::Other, "invalid QOS")
-    }
+    fn invalid_qos() -> Error { Error::new(io::ErrorKind::Other, "invalid QOS") }
 }
 
 pub fn connect(payload: &[u8]) -> Result<Option<(String, Option<String>, Option<String>, Option<(String, String, u8)>)>> {
@@ -221,19 +205,15 @@ fn take_two_bytes(payload: &mut slice::Iter<u8>) -> Result<u16> {
     }
 }
 
-fn take_payload(payload: &mut slice::Iter<u8>) -> Vec<u8> {
-    payload.cloned().collect::<Vec<u8>>()
-}
+fn take_payload(payload: &mut slice::Iter<u8>) -> Vec<u8> { payload.cloned().collect::<Vec<u8>>() }
 
-fn is_flag_set(connect_flags: u8, pos: u8) -> bool {
-    (connect_flags >> pos) & 0b0000_0001 == 0b0000_0001
-}
+fn is_flag_set(connect_flags: u8, pos: u8) -> bool { (connect_flags >> pos) & 0b0000_0001 == 0b0000_0001 }
 
 #[cfg(test)]
 mod tests {
     // use test::Bencher;
-    use bytes::BytesMut;
     use super::*;
+    use bytes::BytesMut;
 
     #[test]
     fn test_parse_connect_with_client_id_only() {

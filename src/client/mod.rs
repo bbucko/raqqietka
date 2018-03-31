@@ -1,14 +1,14 @@
-mod handlers;
-
-use self::handlers::{MQTTPacket, Type};
+use broker::Broker;
 use bytes::Bytes;
-use futures::sync::mpsc;
 use codec::{MQTT as Codec, Packet};
+use futures::sync::mpsc;
+use self::handlers::{MQTTPacket, Type};
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::io;
 use tokio::prelude::*;
-use std::sync::Arc;
-use broker::Broker;
-use std::net::SocketAddr;
+
+mod handlers;
 
 type Tx = mpsc::UnboundedSender<Bytes>;
 type Rx = mpsc::UnboundedReceiver<Bytes>;
@@ -25,9 +25,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn id(&self) -> &SocketAddr {
-        &self.addr
-    }
+    pub fn id(&self) -> &SocketAddr { &self.addr }
 
     pub fn new(packet: Packet, packets: Codec, broker: Arc<Broker>, addr: SocketAddr) -> Option<(Self, Tx)> {
         match handlers::connect(&packet.payload) {
@@ -35,11 +33,11 @@ impl Client {
                 let (tx, rx) = mpsc::unbounded();
                 Some((
                     Self {
-                        client_id: client_id,
-                        packets: packets,
-                        rx: rx,
-                        broker: broker,
-                        addr: addr,
+                        client_id,
+                        packets,
+                        rx,
+                        broker,
+                        addr,
                     },
                     tx,
                 ))
@@ -48,9 +46,7 @@ impl Client {
         }
     }
 
-    fn response(&self, msg: Vec<u8>) {
-        self.broker.publish_message(self, msg);
-    }
+    fn response(&self, msg: Vec<u8>) { self.broker.publish_message(self, msg); }
 }
 
 impl Future for Client {
@@ -132,7 +128,5 @@ impl Future for Client {
 }
 
 impl Drop for Client {
-    fn drop(&mut self) {
-        Broker::unregister(self, self.broker.clone());
-    }
+    fn drop(&mut self) { Broker::unregister(self, self.broker.clone()); }
 }

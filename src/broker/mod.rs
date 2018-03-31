@@ -1,11 +1,11 @@
-use futures::sync::mpsc;
 use bytes::Bytes;
 use client::Client;
 use codec::MQTT;
 use codec::Packet;
+use futures::sync::mpsc;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use std::net::SocketAddr;
+use std::sync::{Arc, RwLock};
 
 type Tx = mpsc::UnboundedSender<Bytes>;
 

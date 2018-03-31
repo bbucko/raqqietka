@@ -1,16 +1,9 @@
-use tokio::net::TcpStream;
 use bytes::{BufMut, BytesMut};
-use tokio::prelude::*;
 use tokio::io;
+use tokio::net::TcpStream;
+use tokio::prelude::*;
 
 static THRESHOLD: u32 = 128 * 128 * 128;
-
-#[derive(Debug)]
-pub struct MQTT {
-    stream: TcpStream,
-    rd: BytesMut,
-    wr: BytesMut,
-}
 
 #[derive(Debug)]
 pub struct Packet {
@@ -25,6 +18,13 @@ impl Packet {
         let flags = header & 0b0000_1111;
         Packet { packet_type, flags, payload }
     }
+}
+
+#[derive(Debug)]
+pub struct MQTT {
+    stream: TcpStream,
+    rd: BytesMut,
+    wr: BytesMut,
 }
 
 impl MQTT {
@@ -61,7 +61,7 @@ impl MQTT {
             // Read data into the buffer.
             let n = try_ready!(self.stream.read_buf(&mut self.rd));
             if n == 0 {
-                info!("closing socket");
+                debug!("closing socket: {:?}", self.stream.peer_addr().unwrap());
                 return Ok(Async::Ready(()));
             }
         }
@@ -88,9 +88,7 @@ impl MQTT {
         value as usize
     }
 
-    fn read_header(&mut self) -> u8 {
-        self.rd.split_to(1)[0]
-    }
+    fn read_header(&mut self) -> u8 { self.rd.split_to(1)[0] }
 
     fn read_payload(&mut self) -> BytesMut {
         let payload_length = self.read_variable_length();
@@ -112,7 +110,7 @@ impl Stream for MQTT {
             Ok(Async::Ready(Some(Packet::new(self.read_header(), self.read_payload()))))
         } else if sock_closed {
             //closed socket?
-            info!("closed socket");
+            debug!("closed socket: {:?}", self.stream.peer_addr().unwrap());
             Ok(Async::Ready(None))
         } else {
             //not enough

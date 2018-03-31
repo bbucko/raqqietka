@@ -7,26 +7,24 @@ extern crate log;
 extern crate simple_logger;
 extern crate tokio;
 
-mod client;
-mod codec;
-mod broker;
-
-use codec::MQTT as Codec;
 use broker::Broker;
-
+use codec::MQTT as Codec;
 use futures::{Future, Stream};
 use futures::future::{self, Either};
-
 use log::LogLevel;
 use std::sync::Arc;
 use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
 
+mod broker;
+mod client;
+mod codec;
+
 fn handle_error(e: io::Error) {
     error!("connection error = {:?}", e);
 }
 
-fn process(socket: TcpStream, broker: Arc<Broker>) -> Box<Future<Item = (), Error = ()> + Send> {
+fn process(socket: TcpStream, broker: Arc<Broker>) -> Box<Future<Item=(), Error=()> + Send> {
     info!("new connection accepted from: {:?} to broker: {:?}", socket.peer_addr(), broker);
     let addr = socket.peer_addr().unwrap();
     let msg = Codec::new(socket)
