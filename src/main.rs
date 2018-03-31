@@ -51,7 +51,7 @@ fn process(socket: TcpStream, broker: Arc<Broker>) -> Box<Future<Item=(), Error=
 fn main() {
     simple_logger::init_with_level(LogLevel::Info).unwrap();
 
-    let addr_str = format!("127.0.0.1:{}", port());
+    let addr_str = format!("0.0.0.0:{}", port());
     info!("raqqietka starting on {}", addr_str);
 
     let addr = addr_str.parse().unwrap();
