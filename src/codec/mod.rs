@@ -61,7 +61,7 @@ impl MQTT {
             // Read data into the buffer.
             let n = try_ready!(self.stream.read_buf(&mut self.rd));
             if n == 0 {
-                debug!("Closing socket");
+                info!("closing socket");
                 return Ok(Async::Ready(()));
             }
         }
@@ -112,6 +112,7 @@ impl Stream for MQTT {
             Ok(Async::Ready(Some(Packet::new(self.read_header(), self.read_payload()))))
         } else if sock_closed {
             //closed socket?
+            info!("closed socket");
             Ok(Async::Ready(None))
         } else {
             //not enough

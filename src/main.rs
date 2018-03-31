@@ -28,7 +28,7 @@ fn handle_error(e: io::Error) {
 
 fn process(socket: TcpStream, broker: Arc<Broker>) -> Box<Future<Item = (), Error = ()> + Send> {
     info!("new connection accepted from: {:?} to broker: {:?}", socket.peer_addr(), broker);
-
+    let addr = socket.peer_addr().unwrap();
     let msg = Codec::new(socket)
         .into_future()
         .map_err(|(e, _)| e)
@@ -36,7 +36,7 @@ fn process(socket: TcpStream, broker: Arc<Broker>) -> Box<Future<Item = (), Erro
             info!("new client connected: {:?}", connect);
             match connect {
                 Some(connect) => {
-                    if let Some(client) = Broker::rgs(connect, packets, broker) {
+                    if let Some(client) = Broker::register(connect, packets, broker, addr) {
                         return Either::A(client);
                     } else {
                         return Either::B(future::ok(()));

@@ -8,6 +8,7 @@ use tokio::io;
 use tokio::prelude::*;
 use std::sync::Arc;
 use broker::Broker;
+use std::net::SocketAddr;
 
 type Tx = mpsc::UnboundedSender<Bytes>;
 type Rx = mpsc::UnboundedReceiver<Bytes>;
@@ -16,40 +17,39 @@ static LINES_PER_TICK: usize = 10;
 
 #[derive(Debug)]
 pub struct Client {
-    pub client_id: String,
+    client_id: String,
     packets: Codec,
+    addr: SocketAddr,
     rx: Rx,
     broker: Arc<Broker>,
 }
 
 impl Client {
-    pub fn id(&self) -> String {
-        self.client_id.clone()
+    pub fn id(&self) -> &SocketAddr {
+        &self.addr
     }
 
-    pub fn new(packet: Packet, packets: Codec, broker: Arc<Broker>) -> Option<(Self, Tx)> {
+    pub fn new(packet: Packet, packets: Codec, broker: Arc<Broker>, addr: SocketAddr) -> Option<(Self, Tx)> {
         match handlers::connect(&packet.payload) {
-            Ok(Some((client_id, _username, _password, _will))) => Some(Client::create(client_id, packets, broker)),
+            Ok(Some((client_id, _username, _password, _will))) => {
+                let (tx, rx) = mpsc::unbounded();
+                Some((
+                    Self {
+                        client_id: client_id,
+                        packets: packets,
+                        rx: rx,
+                        broker: broker,
+                        addr: addr,
+                    },
+                    tx,
+                ))
+            }
             _ => None,
         }
     }
 
     fn response(&self, msg: Vec<u8>) {
-        self.broker.publish_message(&self.client_id, msg);
-    }
-
-    fn create(client_info: String, packets: Codec, broker: Arc<Broker>) -> (Self, Tx) {
-        let (tx, rx) = mpsc::unbounded();
-
-        (
-            Self {
-                client_id: client_info,
-                packets: packets,
-                rx: rx,
-                broker: broker,
-            },
-            tx,
-        )
+        self.broker.publish_message(self, msg);
     }
 }
 
@@ -62,7 +62,7 @@ impl Future for Client {
         for i in 0..LINES_PER_TICK {
             match self.rx.poll().unwrap() {
                 Async::Ready(Some(v)) => {
-                    debug!("sending packets: {:?}", v);
+                    info!("sending packets: {:?}", v);
                     self.packets.buffer(&v);
 
                     //be good to others my dear future ;)
@@ -91,9 +91,9 @@ impl Future for Client {
                     14 => handlers::disconnect(&packet.payload),
                     _ => return Ok(Async::Ready(())),
                 }?;
-                info!("rq: {:?}", rq);
 
                 if let Some(rq) = rq {
+                    info!("rq: {:?}", rq);
                     let rs = match rq.packet {
                         Type::PUBLISH(Some(packet_identifier), _topic, _qos_level, _payload) => MQTTPacket::puback(packet_identifier),
                         Type::PUBLISH(None, _topic, 0, _payload) => MQTTPacket::none(),
@@ -102,8 +102,8 @@ impl Future for Client {
                         Type::DISCONNECT => MQTTPacket::none(),
                         _ => MQTTPacket::none(),
                     };
-                    info!("rs: {:?}", rs);
 
+                    info!("rs: {:?}", rs);
                     match rs.packet {
                         Type::PUBACK(packet_identifier) => {
                             self.response(vec![0b0100_0000, 0b0000_0010, (packet_identifier >> 8) as u8, packet_identifier as u8]);
@@ -133,6 +133,6 @@ impl Future for Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        info!("Disconecting: {:?}", self);
+        Broker::unregister(self, self.broker.clone());
     }
 }

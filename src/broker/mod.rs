@@ -5,12 +5,13 @@ use codec::MQTT;
 use codec::Packet;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::net::SocketAddr;
 
 type Tx = mpsc::UnboundedSender<Bytes>;
 
 #[derive(Debug)]
 pub struct Broker {
-    clients: RwLock<HashMap<String, Tx>>,
+    clients: RwLock<HashMap<SocketAddr, Tx>>,
 }
 
 impl Broker {
@@ -20,15 +21,17 @@ impl Broker {
         }
     }
 
-    pub fn rgs(connect: Packet, packets: MQTT, broker: Arc<Broker>) -> Option<Client> {
-        if let Some((client, tx)) = Client::new(connect, packets, broker.clone()) {
-            broker.register_client(client.id(), tx);
+    pub fn register(connect: Packet, packets: MQTT, broker: Arc<Broker>, addr: SocketAddr) -> Option<Client> {
+        if let Some((client, tx)) = Client::new(connect, packets, broker.clone(), addr) {
+            broker.register_client(&client, tx);
             return Some(client);
         }
         None
     }
 
-    pub fn publish_message(&self, client_id: &String, msg: Vec<u8>) {
+    pub fn publish_message(&self, client: &Client, msg: Vec<u8>) {
+        let client_id = client.id();
+
         info!("publishing message: {:?} to client: {:?}", msg, client_id);
         match self.clients.read().unwrap().get(client_id) {
             Some(tx) => tx.unbounded_send(Bytes::from(msg)).unwrap(),
@@ -36,9 +39,23 @@ impl Broker {
         }
     }
 
-    pub fn register_client(&self, client_info: String, tx: Tx) {
-        info!("registering {:?}", client_info);
-        self.clients.write().unwrap().insert(client_info.clone(), tx);
-        self.publish_message(&client_info, vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]);
+    pub fn unregister(client: &Client, broker: Arc<Broker>) {
+        let client_id = client.id();
+
+        info!("unregistering {:?}", client_id);
+        let mut clients = broker.clients.write().unwrap();
+        clients.remove(client_id);
+        info!("unregistered {:?}; clients registered: {}", client_id, clients.len());
+    }
+
+    fn register_client(&self, client: &Client, tx: Tx) {
+        {
+            let client_id = client.id();
+            let mut clients = self.clients.write().unwrap();
+
+            info!("registering {:?}; clients registered: {}", client_id, clients.len());
+            clients.insert(client_id.clone(), tx);
+        }
+        self.publish_message(client, vec![0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000]);
     }
 }
