@@ -106,14 +106,12 @@ impl Future for Client {
 
                     match rs.packet {
                         Type::PUBACK(packet_identifier) => {
-                            self.response(vec![0b0100_0000, 0b0000_0010]);
-                            self.response(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
+                            self.response(vec![0b0100_0000, 0b0000_0010, (packet_identifier >> 8) as u8, packet_identifier as u8]);
                         }
                         Type::SUBACK(packet_identifier, qos) => {
-                            info!("packet_identifier: {:?}, qos: {:?}", packet_identifier, qos);
-                            self.response(vec![0b1001_0000, 0b0000_0010]);
-                            self.response(vec![(packet_identifier >> 8) as u8, packet_identifier as u8]);
-                            self.response(qos);
+                            let mut payload = vec![0b1001_0000, 0b0000_0010, (packet_identifier >> 8) as u8, packet_identifier as u8];
+                            payload.extend(qos);
+                            self.response(payload);
                         }
                         Type::PINGRES => self.response(vec![0b1101_0000, 0b0000_0000]),
                         Type::NONE => return Ok(Async::NotReady),

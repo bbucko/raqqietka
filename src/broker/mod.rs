@@ -29,9 +29,10 @@ impl Broker {
     }
 
     pub fn publish_message(&self, client_id: &String, msg: Vec<u8>) {
+        info!("publishing message: {:?} to client: {:?}", msg, client_id);
         match self.clients.read().unwrap().get(client_id) {
             Some(tx) => tx.unbounded_send(Bytes::from(msg)).unwrap(),
-            None => info!("unknown client"),
+            None => panic!("unknown client"),
         }
     }
 
