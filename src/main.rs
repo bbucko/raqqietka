@@ -50,16 +50,26 @@ fn process(socket: TcpStream, broker: Arc<Broker>) -> Box<Future<Item=(), Error=
 
 fn main() {
     simple_logger::init_with_level(LogLevel::Info).unwrap();
-    info!("raqqietka starting");
+
+    let addr_str = format!("127.0.0.1:{}", port());
+    info!("raqqietka starting on {}", addr_str);
+
+    let addr = addr_str.parse().unwrap();
+    let listener = TcpListener::bind(&addr).unwrap();
 
     let broker = Arc::new(Broker::new());
 
-    let addr = "127.0.0.1:1883".parse().unwrap();
-    let listener = TcpListener::bind(&addr).unwrap();
     let server = listener
         .incoming()
         .map_err(|e| error!("failed to accept socket; error = {:?}", e))
         .for_each(move |socket| tokio::spawn(process(socket, broker.clone())));
 
     tokio::run(server);
+}
+
+fn port() -> String {
+    match std::env::var("process.env.PORT") {
+        Ok(val) => val,
+        _ => "1883".to_string(),
+    }
 }

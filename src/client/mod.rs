@@ -1,8 +1,8 @@
+use self::handlers::{MQTTPacket, Type};
 use broker::Broker;
 use bytes::Bytes;
 use codec::{MQTT as Codec, Packet};
 use futures::sync::mpsc;
-use self::handlers::{MQTTPacket, Type};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io;
@@ -55,7 +55,7 @@ impl Future for Client {
 
     fn poll(&mut self) -> Poll<(), io::Error> {
         debug!("flush outbound queue: {:?}", self.rx);
-        for i in 0..LINES_PER_TICK {
+        for i in 0 .. LINES_PER_TICK {
             match self.rx.poll().unwrap() {
                 Async::Ready(Some(v)) => {
                     info!("sending packets: {:?}", v);
