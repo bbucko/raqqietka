@@ -68,7 +68,7 @@ fn main() {
 }
 
 fn port() -> String {
-    match std::env::var("process.env.PORT") {
+    match std::env::var("PORT") {
         Ok(val) => val,
         _ => "1883".to_string(),
     }
