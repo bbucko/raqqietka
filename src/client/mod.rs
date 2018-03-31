@@ -27,7 +27,7 @@ pub struct Client {
 impl Client {
     pub fn id(&self) -> &SocketAddr { &self.addr }
 
-    pub fn new(packet: Packet, packets: Codec, broker: Arc<Broker>, addr: SocketAddr) -> Option<(Self, Tx)> {
+    pub fn new(packet: &Packet, packets: Codec, broker: Arc<Broker>, addr: SocketAddr) -> Option<(Self, Tx)> {
         match handlers::connect(&packet.payload) {
             Ok(Some((client_id, _username, _password, _will))) => {
                 let (tx, rx) = mpsc::unbounded();
@@ -128,5 +128,5 @@ impl Future for Client {
 }
 
 impl Drop for Client {
-    fn drop(&mut self) { Broker::unregister(self, self.broker.clone()); }
+    fn drop(&mut self) { Broker::unregister(self, &self.broker); }
 }

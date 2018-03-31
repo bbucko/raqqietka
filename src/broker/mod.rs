@@ -21,7 +21,7 @@ impl Broker {
         }
     }
 
-    pub fn register(connect: Packet, packets: MQTT, broker: Arc<Broker>, addr: SocketAddr) -> Option<Client> {
+    pub fn register(connect: &Packet, packets: MQTT, broker: &Arc<Broker>, addr: SocketAddr) -> Option<Client> {
         if let Some((client, tx)) = Client::new(connect, packets, broker.clone(), addr) {
             broker.register_client(&client, tx);
             return Some(client);
@@ -39,7 +39,7 @@ impl Broker {
         }
     }
 
-    pub fn unregister(client: &Client, broker: Arc<Broker>) {
+    pub fn unregister(client: &Client, broker: &Arc<Broker>) {
         let client_id = client.id();
 
         info!("unregistering {:?}", client_id);

@@ -30,7 +30,7 @@ pub struct MQTT {
 impl MQTT {
     pub fn new(stream: TcpStream) -> Self {
         Self {
-            stream: stream,
+            stream,
             rd: BytesMut::new(),
             wr: BytesMut::new(),
         }
@@ -76,7 +76,7 @@ impl MQTT {
 
             value += u32::from(encoded_byte & 127) * multiplier;
             multiplier *= 128;
-            pos = pos + 1;
+            pos += 1;
 
             if encoded_byte & 128 == 0 {
                 break;

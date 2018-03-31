@@ -8,6 +8,7 @@ use std::string;
 pub type Error = io::Error;
 pub type Result<T> = result::Result<T, Error>;
 pub type Rs = Result<Option<MQTTPacket>>;
+pub type ConnectValues = (String, Option<String>, Option<String>, Option<(String, String, u8)>);
 
 struct Errors;
 
@@ -72,7 +73,7 @@ impl Errors {
     fn invalid_qos() -> Error { Error::new(io::ErrorKind::Other, "invalid QOS") }
 }
 
-pub fn connect(payload: &[u8]) -> Result<Option<(String, Option<String>, Option<String>, Option<(String, String, u8)>)>> {
+pub fn connect(payload: &[u8]) -> Result<Option<ConnectValues>> {
     trace!("CONNECT payload {:?}", payload);
     let mut iter = payload.iter();
 

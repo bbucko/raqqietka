@@ -34,7 +34,7 @@ fn process(socket: TcpStream, broker: Arc<Broker>) -> Box<Future<Item=(), Error=
             info!("new client connected: {:?}", connect);
             match connect {
                 Some(connect) => {
-                    if let Some(client) = Broker::register(connect, packets, broker, addr) {
+                    if let Some(client) = Broker::register(&connect, packets, &broker, addr) {
                         return Either::A(client);
                     } else {
                         return Either::B(future::ok(()));
