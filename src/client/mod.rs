@@ -6,6 +6,8 @@ use futures::sync::mpsc;
 use codec::{MQTT as Codec, Packet};
 use tokio::io;
 use tokio::prelude::*;
+use std::sync::Arc;
+use broker::Broker;
 
 type Tx = mpsc::UnboundedSender<Bytes>;
 type Rx = mpsc::UnboundedReceiver<Bytes>;
@@ -14,33 +16,40 @@ static LINES_PER_TICK: usize = 10;
 
 #[derive(Debug)]
 pub struct Client {
+    pub client_id: String,
     packets: Codec,
-    pub client_info: String,
     rx: Rx,
-    pub tx: Tx,
+    broker: Arc<Broker>,
 }
 
 impl Client {
-    pub fn new(packet: Packet, packets: Codec) -> Option<Self> {
+    pub fn id(&self) -> String {
+        self.client_id.clone()
+    }
+
+    pub fn new(packet: Packet, packets: Codec, broker: Arc<Broker>) -> Option<(Self, Tx)> {
         match handlers::connect(&packet.payload) {
-            Ok(Some((client_id, _username, _password, _will))) => Some(Client::create(client_id, packets)),
+            Ok(Some((client_id, _username, _password, _will))) => Some(Client::create(client_id, packets, broker)),
             _ => None,
         }
     }
 
-    fn response(&mut self, bytes: Vec<u8>) {
-        self.tx.unbounded_send(Bytes::from(bytes)).unwrap();
+    fn response(&self, msg: Vec<u8>) {
+        self.broker.publish_message(&self.client_id, msg);
     }
 
-    fn create(client_info: String, packets: Codec) -> Self {
+    fn create(client_info: String, packets: Codec, broker: Arc<Broker>) -> (Self, Tx) {
         let (tx, rx) = mpsc::unbounded();
 
-        Self {
-            client_info: client_info,
-            packets: packets,
-            rx: rx,
-            tx: tx,
-        }
+        (
+            Self {
+                client_id: client_info,
+                packets: packets,
+                rx: rx,
+                broker: broker,
+            },
+            tx,
+        )
     }
 }
 
@@ -72,7 +81,7 @@ impl Future for Client {
                 //handle various packets
                 debug!(
                     "Received parsed packet: {:?}) :: {:?}; client: {:?}",
-                    packet.packet_type, packet.payload, self.client_info
+                    packet.packet_type, packet.payload, self.client_id
                 );
 
                 let rq = match packet.packet_type {

@@ -18,7 +18,7 @@ use futures::{Future, Stream};
 use futures::future::{self, Either};
 
 use log::LogLevel;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -26,7 +26,7 @@ fn handle_error(e: io::Error) {
     error!("connection error = {:?}", e);
 }
 
-fn process(socket: TcpStream, broker: Arc<Mutex<Broker>>) -> Box<Future<Item = (), Error = ()> + Send> {
+fn process(socket: TcpStream, broker: Arc<Broker>) -> Box<Future<Item = (), Error = ()> + Send> {
     info!("new connection accepted from: {:?} to broker: {:?}", socket.peer_addr(), broker);
 
     let msg = Codec::new(socket)
@@ -34,10 +34,9 @@ fn process(socket: TcpStream, broker: Arc<Mutex<Broker>>) -> Box<Future<Item = (
         .map_err(|(e, _)| e)
         .and_then(move |(connect, packets)| {
             info!("new client connected: {:?}", connect);
-            let mut broker = broker.lock().unwrap();
             match connect {
                 Some(connect) => {
-                    if let Some(client) = broker.register(connect, packets) {
+                    if let Some(client) = Broker::rgs(connect, packets, broker.clone()) {
                         return Either::A(client);
                     } else {
                         return Either::B(future::ok(()));
@@ -55,7 +54,7 @@ fn main() {
     simple_logger::init_with_level(LogLevel::Info).unwrap();
     info!("raqqietka starting");
 
-    let broker = Arc::new(Mutex::new(Broker::new()));
+    let broker = Arc::new(Broker::new());
 
     let addr = "127.0.0.1:1883".parse().unwrap();
     let listener = TcpListener::bind(&addr).unwrap();
