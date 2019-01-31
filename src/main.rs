@@ -1,75 +1,63 @@
-#![deny(warnings)]
 extern crate bytes;
+#[macro_use]
+extern crate enum_primitive_derive;
 #[macro_use]
 extern crate futures;
 #[macro_use]
 extern crate log;
-extern crate simple_logger;
+extern crate num_traits;
 extern crate tokio;
 
-use broker::Broker;
-use codec::MQTT as Codec;
-use futures::{Future, Stream};
+use std::sync::{Arc, Mutex};
+
 use futures::future::{self, Either};
-use log::LogLevel;
-use std::sync::Arc;
-use tokio::io;
-use tokio::net::{TcpListener, TcpStream};
+use log::Level;
+use tokio::net::TcpListener;
+use tokio::prelude::*;
 
-mod broker;
-mod client;
-mod codec;
+use mqtt::*;
 
-fn handle_error(e: io::Error) {
-    error!("connection error = {:?}", e);
-}
+mod mqtt;
 
-fn process(socket: TcpStream, broker: Arc<Broker>) -> Box<Future<Item=(), Error=()> + Send> {
-    info!("new connection accepted from: {:?} to broker: {:?}", socket.peer_addr(), broker);
-    let addr = socket.peer_addr().unwrap();
-    let msg = Codec::new(socket)
-        .into_future()
-        .map_err(|(e, _)| e)
-        .and_then(move |(connect, packets)| {
-            info!("new client connected: {:?}", connect);
-            match connect {
-                Some(connect) => {
-                    if let Some(client) = Broker::register(&connect, packets, &broker, addr) {
-                        return Either::A(client);
-                    } else {
-                        return Either::B(future::ok(()));
-                    }
-                }
-                None => Either::B(future::ok(())),
-            }
-        })
-        .map_err(handle_error);
+fn main() -> Result<(), Box<std::error::Error>> {
+    simple_logger::init_with_level(Level::Info).unwrap();
 
-    Box::new(msg)
-}
+    let bind_addr = "127.0.0.1:1883".parse()?;
+    let listener = TcpListener::bind(&bind_addr)?;
+    info!("raqqietka starting on {}", bind_addr);
 
-fn main() {
-    simple_logger::init_with_level(LogLevel::Info).unwrap();
-
-    let addr_str = format!("0.0.0.0:{}", port());
-    info!("raqqietka starting on {}", addr_str);
-
-    let addr = addr_str.parse().unwrap();
-    let listener = TcpListener::bind(&addr).unwrap();
-
-    let broker = Arc::new(Broker::new());
+    let broker = Arc::new(Mutex::new(Broker::new()));
 
     let server = listener
         .incoming()
-        .map_err(|e| error!("failed to accept socket; error = {:?}", e))
-        .for_each(move |socket| tokio::spawn(process(socket, broker.clone())));
+        .map_err(|e| error!("Client tried to connect and failed: {:?}", e))
+        .for_each(move |socket| {
+            let packets = mqtt::Packets::new(socket);
+
+            let broker = broker.clone();
+
+            let connection = packets
+                .into_future()
+                .map_err(|(e, _)| e)
+                .and_then(|(connect, packets)| {
+                    let connect = match connect {
+                        Some(connect) => connect,
+                        None => {
+                            return Either::A(future::ok(()));
+                        }
+                    };
+
+                    let client = Client::new(connect, broker, packets);
+                    Either::B(client)
+                })
+                .map_err(|e| {
+                    error!("Connection error = {:?}", e);
+                });
+
+            tokio::spawn(connection)
+        });
 
     tokio::run(server);
-}
 
-fn port() -> String {
-    match std::env::var("PORT") {
-        Ok(val) => val,
-        _ => "1883".to_string(),
-    }
+    Ok(())
 }
