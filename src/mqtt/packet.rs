@@ -76,11 +76,12 @@ impl Packet {
         }
     }
 
-    pub fn suback(packet_identifier: u16) -> Packet {
+    pub fn suback(packet_identifier: u16, subscription_results: &[u8]) -> Packet {
         let mut payload = BytesMut::new();
         payload.put_u16_be(packet_identifier);
+        payload.put(subscription_results);
 
-        info!("Responded with SUBACK");
+        info!("Responded with SUBACK: {:?}", payload);
 
         Packet {
             packet_type: PacketType::SUBACK,
@@ -115,7 +116,6 @@ impl Packet {
 
     fn type_and_flags(packet_type: &PacketType, flags: u8) -> u8 {
         assert!(flags <= 0b0000_1111);
-
         packet_type.to_u8().map(|packet_type| (packet_type << 4) + flags).unwrap()
     }
 }

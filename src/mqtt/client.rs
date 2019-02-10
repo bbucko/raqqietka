@@ -35,11 +35,16 @@ impl Future for Client {
                 let mut broker = self.broker.lock().expect("missing broker");
 
                 match packet.packet_type {
+                    PacketType::CONNECT => {
+                        info!("Duplicated CONNECT. Client disconnected: {}", self);
+                        return Ok(Async::Ready(()));
+                    }
                     PacketType::SUBSCRIBE => {
                         let subscribe = Subscribe::from(packet)?;
                         let packet_id = subscribe.packet_id;
-                        if broker.subscribe(&self, subscribe).is_ok() {
-                            self.packets.buffer(Packet::suback(packet_id));
+
+                        if let Ok(results) = broker.subscribe(&self, subscribe) {
+                            self.packets.buffer(Packet::suback(packet_id, &results));
                         } else {
                             return Ok(Async::Ready(()));
                         }
@@ -87,7 +92,6 @@ impl Client {
     pub fn new(packet: Packet, broker: Arc<Mutex<Broker>>, packets: Packets) -> Client {
         let addr = packets.socket.peer_addr().unwrap();
         let (outgoing, incoming) = mpsc::unbounded();
-        dbg!(&packet.payload);
 
         let connect = Connect::from(packet).expect("Malformed connect");
 

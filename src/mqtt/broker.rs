@@ -28,16 +28,19 @@ impl Broker {
         self.clients.remove(&client_id);
     }
 
-    pub fn subscribe(&mut self, client: &Client, subscribe: Subscribe) -> Result<(), io::Error> {
-        for (topic, _qos) in subscribe.topics {
-            info!("Client: {} has subscribed to topic: {}", client, topic);
+    pub fn subscribe(&mut self, client: &Client, subscribe: Subscribe) -> Result<Vec<u8>, io::Error> {
+        let mut result = vec!();
+        for (topic, qos) in subscribe.topics {
+            info!("Client: {} has subscribed to topic: {} with qos {}", client, topic, qos);
             self.subscriptions
                 .entry(topic.to_owned())
                 .or_insert_with(HashSet::new)
                 .insert(client.client_id.clone());
+
+            result.push(qos);
         }
 
-        Ok(())
+        Ok(result)
     }
 
     pub fn publish(&mut self, publish: Publish) -> Result<(), io::Error> {
@@ -63,7 +66,6 @@ impl Broker {
 
 #[derive(Debug)]
 pub struct Connect {
-    pub proto: Option<String>,
     pub version: u8,
     pub client_id: Option<ClientId>,
     pub auth: Option<ConnectAuth>,
@@ -90,26 +92,40 @@ impl Connect {
         //rewrite to try_from
         assert_eq!(PacketType::CONNECT, packet.packet_type);
 
-        let payload = packet.payload.expect("Missing header");
+        let payload = packet.payload.ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed payload"))?;
 
         let (proto_name, payload) = util::take_string(&payload)?;
-        let (version, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
-        let (flags, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
+        assert_eq!(proto_name, "MQTT".to_string());
+
+        let (version, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed version"))?;
+        let (flags, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed flags"))?;
 
         let clean_session = util::check_flag(flags, 1);
         let (_keep_alive, payload) = util::take_u18(&payload)?;
 
         let (client_id, mut payload) = util::take_string(&payload)?;
+
+        if client_id.is_empty() || client_id.len() > 23 {
+            return Err(io::Error::new(ErrorKind::Other, "malformed client_id invalid length"));
+        }
+
+        if !client_id.chars().all(|c| c.is_alphanumeric()) {
+            //return 0x02
+            return Err(io::Error::new(ErrorKind::Other, "malformed client_id invalid characters"));
+        }
+
         let will_flag = util::check_flag(flags, 2);
+        let will_retain = util::check_flag(flags, 5);
+        let will_qos: u8 = (flags >> 3) & 3u8;
 
         let will = if will_flag {
             let internal_payload = payload;
 
-            let will_retain = util::check_flag(flags, 5);
-            let will_qos: u8 = (flags >> 3) & 3u8;
+
             let (will_topic, internal_payload) = util::take_string(&internal_payload)?;
             let (will_length, internal_payload) = util::take_u18(&internal_payload)?;
             let (will_payload, internal_payload) = internal_payload.split_at(will_length as usize);
+
             payload = internal_payload;
 
             Some(Will {
@@ -119,6 +135,10 @@ impl Connect {
                 message: Bytes::from(will_payload),
             })
         } else {
+            if will_retain || will_qos != 0 {
+                return Err(io::Error::new(ErrorKind::Other, "malformed will"));
+            }
+
             None
         };
 
@@ -148,7 +168,6 @@ impl Connect {
         assert!(payload.is_empty());
 
         Ok(Connect {
-            proto: Some(proto_name),
             version: *version,
             client_id: Some(client_id),
             auth,
@@ -163,7 +182,7 @@ impl Publish {
         //rewrite to try_from
         assert_eq!(PacketType::PUBLISH, packet.packet_type);
 
-        let payload = packet.payload.expect("missing payload");
+        let payload = packet.payload.ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
 
         let qos = packet.flags >> 1 & 3;
         let (topic, payload) = util::take_string(&payload)?;
@@ -195,7 +214,7 @@ impl Subscribe {
         //rewrite to try_from
         assert_eq!(PacketType::SUBSCRIBE, packet.packet_type);
 
-        let payload = packet.payload.expect("missing payload");
+        let payload = packet.payload.ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
         let (packet_id, mut payload) = util::take_u18(&payload)?;
 
         let mut topics = HashSet::new();
@@ -238,7 +257,6 @@ mod tests {
 
         let connect = Connect::from(packet).unwrap();
         assert_eq!(4, connect.version);
-        assert_eq!(Some("MQTT".to_string()), connect.proto);
         assert_eq!(true, connect.clean_session);
         assert_eq!(Some("abc".to_string()), connect.client_id);
 
@@ -259,7 +277,6 @@ mod tests {
 
         let connect = Connect::from(packet).unwrap();
         assert_eq!(4, connect.version);
-        assert_eq!(Some("MQTT".to_string()), connect.proto);
         assert_eq!(true, connect.clean_session);
         assert_eq!(Some("abc".to_string()), connect.client_id);
 
@@ -281,7 +298,6 @@ mod tests {
 
         let connect = Connect::from(packet).unwrap();
         assert_eq!(4, connect.version);
-        assert_eq!(Some("MQTT".to_string()), connect.proto);
         assert_eq!(true, connect.clean_session);
         assert_eq!(Some("abc".to_string()), connect.client_id);
 
@@ -305,13 +321,25 @@ mod tests {
 
         let connect = Connect::from(packet).unwrap();
         assert_eq!(4, connect.version);
-        assert_eq!(Some("MQTT".to_string()), connect.proto);
         assert_eq!(true, connect.clean_session);
         assert_eq!(Some("abc".to_string()), connect.client_id);
 
         assert!(connect.will.is_none());
 
         assert!(connect.auth.is_none());
+    }
+
+    #[test]
+    fn test_parsing_connect_with_invalid_characters() {
+        let packet = Packet {
+            payload: Some(Bytes::from(&b"\0\x04MQTT\x04\x02\0<\0\x03;bc"[..])),
+            packet_type: PacketType::CONNECT,
+            flags: 0,
+        };
+        let result = Connect::from(packet);
+
+        assert!(result.is_err());
+        assert_eq!("malformed client_id invalid characters", result.err().unwrap().to_string());
     }
 
     #[test]
