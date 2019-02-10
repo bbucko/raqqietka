@@ -4,11 +4,14 @@ version = "0.1.0"
 authors = ["Blazej Bucko <blazej.bucko@gmail.com>"]
 
 [dependencies]
-log = "0.3"
-simple_logger = "0.4"
+log = "0.4"
+simple_logger = "1.0"
 tokio = "0.1"
 futures = "0.1"
 bytes = "0.4"
+enum-primitive-derive = "0.1"
+num-traits = "^0.1"
 
 [dev-dependencies]
 matches = "0.1"
+
