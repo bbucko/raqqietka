@@ -62,9 +62,9 @@ pub fn encode_string(string: String) -> Bytes {
     encoded_string.freeze()
 }
 
-pub fn take_u18(bytes: &[u8]) -> Result<(u16, &[u8]), ()> {
+pub fn take_u18(bytes: &[u8]) -> Result<(u16, &[u8]), io::Error> {
     if bytes.len() < 2 {
-        return Err(());
+        return Err(io::Error::new(io::ErrorKind::Other, "malformed"));
     }
     let (length_bytes, bytes) = bytes.split_at(2);
     Ok(((u16::from(length_bytes[0]) << 8) + u16::from(length_bytes[1]), bytes))

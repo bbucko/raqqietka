@@ -6,14 +6,15 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use futures::sync::mpsc;
 use futures::Async;
 use futures::Future;
 use futures::Stream;
+use futures::sync::mpsc;
 
+use mqtt::*;
+use mqtt::broker::Connect;
 use mqtt::broker::Publish;
 use mqtt::broker::Subscribe;
-use mqtt::*;
 
 impl Future for Client {
     type Item = ();
@@ -35,7 +36,7 @@ impl Future for Client {
 
                 match packet.packet_type {
                     PacketType::SUBSCRIBE => {
-                        let subscribe: Subscribe = packet.into();
+                        let subscribe = Subscribe::from(packet)?;
                         let packet_id = subscribe.packet_id;
                         if broker.subscribe(&self, subscribe).is_ok() {
                             self.packets.buffer(Packet::suback(packet_id));
@@ -44,12 +45,12 @@ impl Future for Client {
                         }
                     }
                     PacketType::PUBLISH => {
-                        let publish: Publish = packet.into();
+                        let publish = Publish::from(packet)?;
                         if publish.qos == 1 {
                             self.packets.buffer(Packet::puback(publish.packet_id));
                         }
 
-                        broker.publish(publish);
+                        broker.publish(publish)?;
                     }
                     PacketType::PINGREQ => self.packets.buffer(Packet::pingres()),
                     PacketType::DISCONNECT => {
@@ -83,12 +84,14 @@ impl fmt::Display for Client {
 }
 
 impl Client {
-    pub fn new(connect: Packet, broker: Arc<Mutex<Broker>>, packets: Packets) -> Client {
+    pub fn new(packet: Packet, broker: Arc<Mutex<Broker>>, packets: Packets) -> Client {
         let addr = packets.socket.peer_addr().unwrap();
         let (outgoing, incoming) = mpsc::unbounded();
-        dbg!(&connect.payload);
-        let client_id = broker.lock().expect("Missing broker").connect(connect.into(), outgoing);
+        dbg!(&packet.payload);
 
+        let connect = Connect::from(packet).expect("Malformed connect");
+
+        let client_id = broker.lock().expect("Missing broker").connect(connect, outgoing);
 
         let mut client = Client {
             client_id,

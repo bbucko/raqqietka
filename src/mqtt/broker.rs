@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io;
+use std::io::ErrorKind;
 
 use bytes::Bytes;
 
@@ -85,60 +86,20 @@ pub struct Will {
 }
 
 impl Connect {
-    fn empty() -> Self {
-        Connect {
-            proto: None,
-            version: 0,
-            client_id: None,
-            auth: None,
-            will: None,
-            clean_session: false,
-        }
-    }
-}
-
-impl From<Packet> for Connect {
-    fn from(packet: Packet) -> Self {
+    pub fn from(packet: Packet) -> Result<Self, io::Error> {
         //rewrite to try_from
         assert_eq!(PacketType::CONNECT, packet.packet_type);
 
         let payload = packet.payload.expect("Missing header");
 
-        let (proto_name, payload) = match util::take_string(&payload) {
-            Ok(val) => val,
-            Err(_) => {
-                return Connect::empty();
-            }
-        };
-
-        let (version, payload) = match payload.split_first() {
-            Some(val) => val,
-            None => {
-                return Connect::empty();
-            }
-        };
-
-        let (flags, payload) = match payload.split_first() {
-            Some(val) => val,
-            None => {
-                return Connect::empty();
-            }
-        };
+        let (proto_name, payload) = util::take_string(&payload)?;
+        let (version, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
+        let (flags, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
 
         let clean_session = util::check_flag(flags, 1);
-        let (_keep_alive, payload) = match util::take_u18(&payload) {
-            Ok(val) => val,
-            Err(_) => {
-                return Connect::empty();
-            }
-        };
+        let (_keep_alive, payload) = util::take_u18(&payload)?;
 
-        let (client_id, mut payload) = match util::take_string(&payload) {
-            Ok(val) => val,
-            Err(_) => {
-                return Connect::empty();
-            }
-        };
+        let (client_id, mut payload) = util::take_string(&payload)?;
         let will_flag = util::check_flag(flags, 2);
 
         let will = if will_flag {
@@ -146,20 +107,8 @@ impl From<Packet> for Connect {
 
             let will_retain = util::check_flag(flags, 5);
             let will_qos: u8 = (flags >> 3) & 3u8;
-            let (will_topic, internal_payload) = match util::take_string(&internal_payload) {
-                Ok(val) => val,
-                Err(_) => {
-                    return Connect::empty();
-                }
-            };
-
-            let (will_length, internal_payload) = match util::take_u18(&internal_payload) {
-                Ok(val) => val,
-                Err(_) => {
-                    return Connect::empty();
-                }
-            };
-
+            let (will_topic, internal_payload) = util::take_string(&internal_payload)?;
+            let (will_length, internal_payload) = util::take_u18(&internal_payload)?;
             let (will_payload, internal_payload) = internal_payload.split_at(will_length as usize);
             payload = internal_payload;
 
@@ -177,21 +126,11 @@ impl From<Packet> for Connect {
 
         let auth = if username_flag {
             let internal_payload = payload;
-            let (username, internal_payload) = match util::take_string(&internal_payload) {
-                Ok(val) => val,
-                Err(_) => {
-                    return Connect::empty();
-                }
-            };
+            let (username, internal_payload) = util::take_string(&internal_payload)?;
 
             let password_flag = util::check_flag(flags, 6);
             let password = if password_flag {
-                let (password_length, internal_payload) = match util::take_u18(&internal_payload) {
-                    Ok(val) => val,
-                    Err(_) => {
-                        return Connect::empty();
-                    }
-                };
+                let (password_length, internal_payload) = util::take_u18(&internal_payload)?;
                 let (password, internal_payload) = internal_payload.split_at(password_length as usize);
 
                 payload = internal_payload;
@@ -208,60 +147,39 @@ impl From<Packet> for Connect {
 
         assert!(payload.is_empty());
 
-        Connect {
+        Ok(Connect {
             proto: Some(proto_name),
             version: *version,
             client_id: Some(client_id),
             auth,
             will,
             clean_session,
-        }
+        })
     }
 }
 
 impl Publish {
-    fn empty() -> Publish {
-        Publish {
-            packet_id: 0,
-            payload: Bytes::new(),
-            topic: String::new(),
-            qos: 0,
-        }
-    }
-}
-
-impl From<Packet> for Publish {
-    fn from(packet: Packet) -> Self {
+    pub fn from(packet: Packet) -> Result<Self, io::Error> {
         //rewrite to try_from
         assert_eq!(PacketType::PUBLISH, packet.packet_type);
 
         let payload = packet.payload.expect("missing payload");
 
         let qos = packet.flags >> 1 & 3;
-        let (topic, payload) = match util::take_string(&payload) {
-            Ok(val) => val,
-            Err(_) => {
-                return Publish::empty();
-            }
-        };
+        let (topic, payload) = util::take_string(&payload)?;
 
         let (packet_id, payload) = if qos == 0 {
             (0, payload)
         } else {
-            match util::take_u18(&payload) {
-                Ok((packet_id, payload)) => (packet_id, payload),
-                Err(_) => {
-                    return Publish::empty();
-                }
-            }
+            util::take_u18(&payload)?
         };
 
-        Publish {
+        Ok(Publish {
             packet_id,
             topic,
             qos,
             payload: Bytes::from(payload),
-        }
+        })
     }
 }
 
@@ -273,26 +191,12 @@ pub struct Publish {
 }
 
 impl Subscribe {
-    fn empty() -> Self {
-        Subscribe {
-            packet_id: 0,
-            topics: HashSet::new(),
-        }
-    }
-}
-
-impl From<Packet> for Subscribe {
-    fn from(packet: Packet) -> Self {
+    pub fn from(packet: Packet) -> Result<Self, io::Error> {
         //rewrite to try_from
         assert_eq!(PacketType::SUBSCRIBE, packet.packet_type);
 
         let payload = packet.payload.expect("missing payload");
-        let (packet_id, mut payload) = match util::take_u18(&payload) {
-            Ok((packet_id, payload)) => (packet_id, payload),
-            Err(_) => {
-                return Subscribe::empty();
-            }
-        };
+        let (packet_id, mut payload) = util::take_u18(&payload)?;
 
         let mut topics = HashSet::new();
 
@@ -303,25 +207,15 @@ impl From<Packet> for Subscribe {
 
             let topic_payload = payload;
 
-            let (topic, topic_payload) = match util::take_string(&topic_payload) {
-                Ok(val) => val,
-                Err(_) => {
-                    return Subscribe::empty();
-                }
-            };
+            let (topic, topic_payload) = util::take_string(&topic_payload)?;
 
-            let (qos, topic_payload) = match topic_payload.split_first() {
-                Some(val) => val,
-                None => {
-                    return Subscribe::empty();
-                }
-            };
+            let (qos, topic_payload) = topic_payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
 
             topics.insert((topic, *qos));
             payload = topic_payload;
         }
 
-        Subscribe { packet_id, topics }
+        Ok(Subscribe { packet_id, topics })
     }
 }
 
@@ -335,14 +229,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parsing_connect_with_username_only() {
+        let packet = Packet {
+            payload: Some(Bytes::from(&b"\0\x04MQTT\x04\x82\0<\0\x03abc\0\x08username"[..])),
+            packet_type: PacketType::CONNECT,
+            flags: 0,
+        };
+
+        let connect = Connect::from(packet).unwrap();
+        assert_eq!(4, connect.version);
+        assert_eq!(Some("MQTT".to_string()), connect.proto);
+        assert_eq!(true, connect.clean_session);
+        assert_eq!(Some("abc".to_string()), connect.client_id);
+
+        assert!(connect.will.is_none());
+
+        let auth = connect.auth.unwrap();
+        assert_eq!("username".to_string(), auth.username);
+        assert_eq!(None, auth.password);
+    }
+
+    #[test]
     fn test_parsing_connect_with_will_only() {
-        let connect_packet = Packet {
+        let packet = Packet {
             payload: Some(Bytes::from(&b"\0\x04MQTT\x04\x06\0<\0\x03abc\0\x0b/will/topic\0\x0cwill message"[..])),
             packet_type: PacketType::CONNECT,
             flags: 0,
         };
 
-        let connect: Connect = connect_packet.into();
+        let connect = Connect::from(packet).unwrap();
         assert_eq!(4, connect.version);
         assert_eq!(Some("MQTT".to_string()), connect.proto);
         assert_eq!(true, connect.clean_session);
@@ -357,35 +272,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parsing_connect_with_username_only() {
-        let connect_packet = Packet {
-            payload: Some(Bytes::from(&b"\0\x04MQTT\x04\x82\0<\0\x03abc\0\x08username"[..])),
-            packet_type: PacketType::CONNECT,
-            flags: 0,
-        };
-
-        let connect: Connect = connect_packet.into();
-        assert_eq!(4, connect.version);
-        assert_eq!(Some("MQTT".to_string()), connect.proto);
-        assert_eq!(true, connect.clean_session);
-        assert_eq!(Some("abc".to_string()), connect.client_id);
-
-        assert!(connect.will.is_none());
-
-        let auth = connect.auth.unwrap();
-        assert_eq!("username".to_string(), auth.username);
-        assert_eq!(None, auth.password);
-    }
-
-    #[test]
     fn test_parsing_connect_with_will_and_auth() {
-        let connect_packet = Packet {
+        let packet = Packet {
             payload: Some(Bytes::from(&b"\0\x04MQTT\x04\xc6\0<\0\x03abc\0\x0b/will/topic\0\x0cwill message\0\x08username\0\x08password"[..])),
             packet_type: PacketType::CONNECT,
             flags: 0,
         };
 
-        let connect: Connect = connect_packet.into();
+        let connect = Connect::from(packet).unwrap();
         assert_eq!(4, connect.version);
         assert_eq!(Some("MQTT".to_string()), connect.proto);
         assert_eq!(true, connect.clean_session);
@@ -403,13 +297,13 @@ mod tests {
 
     #[test]
     fn test_parsing_connect() {
-        let connect_packet = Packet {
+        let packet = Packet {
             payload: Some(Bytes::from(&b"\0\x04MQTT\x04\x02\0<\0\x03abc"[..])),
             packet_type: PacketType::CONNECT,
             flags: 0,
         };
 
-        let connect: Connect = connect_packet.into();
+        let connect = Connect::from(packet).unwrap();
         assert_eq!(4, connect.version);
         assert_eq!(Some("MQTT".to_string()), connect.proto);
         assert_eq!(true, connect.clean_session);
@@ -422,13 +316,13 @@ mod tests {
 
     #[test]
     fn test_parsing_publish_qos0() {
-        let publish_packet = Packet {
+        let packet = Packet {
             payload: Some(Bytes::from(&b"\0\n/somethingabc"[..])),
             packet_type: PacketType::PUBLISH,
             flags: 0,
         };
 
-        let publish: Publish = publish_packet.into();
+        let publish = Publish::from(packet).unwrap();
         assert_eq!(0, publish.qos);
         assert_eq!("/something", publish.topic);
         assert_eq!(Bytes::from("abc"), publish.payload);
@@ -442,7 +336,7 @@ mod tests {
             flags: 0b0000_0010,
         };
 
-        let publish: Publish = packet.into();
+        let publish = Publish::from(packet).unwrap();
         assert_eq!(1, publish.qos);
         assert_eq!("/something/else", publish.topic);
         assert_eq!(Bytes::from("abc"), publish.payload);
@@ -456,7 +350,7 @@ mod tests {
             flags: 0b0000_0010,
         };
 
-        let subscribe: Subscribe = packet.into();
+        let subscribe = Subscribe::from(packet).unwrap();
         assert_eq!(1, subscribe.topics.len());
         assert!(subscribe.topics.contains(&(String::from("/something"), 0)));
     }
@@ -469,7 +363,7 @@ mod tests {
             flags: 0b0000_0010,
         };
 
-        let subscribe: Subscribe = packet.into();
+        let subscribe = Subscribe::from(packet).unwrap();
         assert_eq!(2, subscribe.topics.len());
         assert!(subscribe.topics.contains(&(String::from("/qos"), 0)));
         assert!(subscribe.topics.contains(&(String::from("/something/else"), 1)));
