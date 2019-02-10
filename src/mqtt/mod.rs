@@ -11,7 +11,9 @@ use tokio::net::TcpStream;
 
 mod broker;
 mod client;
+mod packet;
 mod packets;
+mod util;
 
 type ClientId = String;
 type Topic = String;
@@ -56,8 +58,8 @@ pub enum PacketType {
     PUBLISH = 3,
     PUBACK = 4,
     //    PUBREC = 5,
-//    PUBREL = 6,
-//    PUBCOMP = 7,
+    //    PUBREL = 6,
+    //    PUBCOMP = 7,
     SUBSCRIBE = 8,
     SUBACK = 9,
     UNSUBSCRIBE = 10,
