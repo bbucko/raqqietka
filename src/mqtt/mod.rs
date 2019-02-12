@@ -11,9 +11,8 @@ use tokio::net::TcpStream;
 
 mod broker;
 mod client;
-mod packet;
-mod packets;
 mod util;
+mod wire;
 
 type ClientId = String;
 type Topic = String;
