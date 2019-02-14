@@ -7,6 +7,7 @@ extern crate futures;
 extern crate log;
 extern crate num_traits;
 extern crate tokio;
+extern crate rocksdb;
 
 use std::sync::{Arc, Mutex};
 

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use bytes::Bytes;
 use bytes::BytesMut;
 use futures::sync::mpsc;
+use rocksdb::DB;
 use tokio::net::TcpStream;
 
 mod broker;
@@ -24,6 +25,7 @@ type Rx = mpsc::UnboundedReceiver<Packet>;
 pub struct Broker {
     clients: HashMap<ClientId, Tx>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
+    db: DB,
 }
 
 #[derive(Debug)]

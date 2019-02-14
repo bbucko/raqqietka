@@ -4,15 +4,26 @@ use std::io;
 use std::io::ErrorKind;
 
 use bytes::Bytes;
+use rocksdb::{ColumnFamilyDescriptor, DB, Options};
 
 use mqtt::*;
 
 impl Broker {
     pub fn new() -> Self {
         info!("Broker has started");
+
+        let cf = ColumnFamilyDescriptor::new("clients", Options::default());
+
+        let mut db_opts = Options::default();
+        db_opts.create_missing_column_families(true);
+        db_opts.create_if_missing(true);
+
+        let db = DB::open_cf_descriptors(&db_opts, "/tmp/rocksdb", vec![cf]).unwrap();
+
         Broker {
             clients: HashMap::new(),
             subscriptions: HashMap::new(),
+            db,
         }
     }
 
@@ -20,15 +31,33 @@ impl Broker {
         let client_id = connect.client_id.unwrap();
         info!("Client: {:?} has connected to broker", &client_id);
         self.clients.insert(client_id.to_owned(), tx);
+
+        let cf_handle = self.db.cf_handle("clients").unwrap();
+        match self.db.put_cf(cf_handle, client_id.clone().as_bytes(), b"{}") {
+            Ok(()) => println!("Created OK"),
+            _ => println!("Error")
+        };
+
         client_id
     }
 
     pub fn disconnect(&mut self, client_id: ClientId) {
         info!("Client: {:?} has disconnected from broker", client_id);
-        self.clients.remove(&client_id);
+
+        let cf_handle = self.db.cf_handle("clients").unwrap();
+        let _result = match self.db.delete_cf(cf_handle, client_id.clone().as_bytes()) {
+            Ok(()) => self.clients.remove(&client_id),
+            _ => None
+        };
     }
 
     pub fn subscribe(&mut self, client: &Client, subscribe: Subscribe) -> Result<Vec<u8>, io::Error> {
+        let cf_handle = self.db.cf_handle("clients").unwrap();
+        let _result = match self.db.get_cf(cf_handle, client.client_id.as_bytes()) {
+            Ok(Some(result)) => result,
+            _ => return Err(io::Error::new(ErrorKind::Other, "uh oh"))
+        };
+
         let mut result = vec!();
         for (topic, qos) in subscribe.topics {
             info!("Client: {} has subscribed to topic: {} with qos {}", client, topic, qos);
