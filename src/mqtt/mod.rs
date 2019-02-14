@@ -13,6 +13,7 @@ mod broker;
 mod client;
 mod util;
 mod wire;
+mod topic;
 
 type ClientId = String;
 type Topic = String;
