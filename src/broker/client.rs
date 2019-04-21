@@ -6,15 +6,11 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use futures::Async;
-use futures::Future;
-use futures::Stream;
 use futures::sync::mpsc;
+use futures::{Async, Future, Stream};
 
-use mqtt::*;
-use mqtt::broker::Connect;
-use mqtt::broker::Publish;
-use mqtt::broker::Subscribe;
+use broker::{Broker, Client, Connect, Publish, Subscribe};
+use mqtt::{Packet, PacketType, Packets};
 
 impl Future for Client {
     type Item = ();
@@ -43,7 +39,7 @@ impl Future for Client {
                         let subscribe = Subscribe::from(packet)?;
                         let packet_id = subscribe.packet_id;
 
-                        if let Ok(results) = broker.subscribe(&self, subscribe) {
+                        if let Ok(results) = broker.subscribe(&self.client_id, subscribe) {
                             self.packets.buffer(Packet::suback(packet_id, &results));
                         } else {
                             return Ok(Async::Ready(()));

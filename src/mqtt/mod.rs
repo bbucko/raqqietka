@@ -1,41 +1,16 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::Mutex;
-
 use bytes::Bytes;
 use bytes::BytesMut;
 use futures::sync::mpsc;
 use tokio::net::TcpStream;
 
-mod broker;
-mod client;
+mod packet;
+mod packets;
 mod util;
-mod wire;
-mod topic;
 
-type ClientId = String;
-type Topic = String;
-type Tx = mpsc::UnboundedSender<Packet>;
-type Rx = mpsc::UnboundedReceiver<Packet>;
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct Broker {
-    clients: HashMap<ClientId, Tx>,
-    subscriptions: HashMap<Topic, HashSet<ClientId>>,
-}
-
-#[derive(Debug)]
-pub struct Client {
-    client_id: ClientId,
-    addr: SocketAddr,
-    disconnected: bool,
-    packets: Packets,
-    incoming: Rx,
-    broker: Arc<Mutex<Broker>>,
-}
+pub type ClientId = String;
+pub type Topic = String;
+pub type Tx = mpsc::UnboundedSender<Packet>;
+pub type Rx = mpsc::UnboundedReceiver<Packet>;
 
 #[derive(Debug)]
 pub struct Packet {
@@ -46,7 +21,7 @@ pub struct Packet {
 
 #[derive(Debug)]
 pub struct Packets {
-    socket: TcpStream,
+    pub socket: TcpStream,
     rd: BytesMut,
     wr: BytesMut,
 }

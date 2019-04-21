@@ -6,6 +6,7 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 extern crate num_traits;
+extern crate regex;
 extern crate tokio;
 
 use std::sync::{Arc, Mutex};
@@ -15,8 +16,10 @@ use log::Level;
 use tokio::net::TcpListener;
 use tokio::prelude::*;
 
+use broker::*;
 use mqtt::*;
 
+mod broker;
 mod mqtt;
 
 fn main() -> Result<(), Box<std::error::Error>> {
@@ -31,24 +34,16 @@ fn main() -> Result<(), Box<std::error::Error>> {
     let server = listener
         .incoming()
         .map_err(|e| error!("Client tried to connect and failed: {:?}", e))
-        .for_each(move |socket| {
-            let packets = mqtt::Packets::new(socket);
-
+        .map(mqtt::Packets::new)
+        .for_each(move |packets| {
             let broker = broker.clone();
 
             let connection = packets
                 .into_future()
                 .map_err(|(e, _)| e)
-                .and_then(|(connect, packets)| {
-                    let connect = match connect {
-                        Some(connect) => connect,
-                        None => {
-                            return Either::A(future::ok(()));
-                        }
-                    };
-
-                    let client = Client::new(connect, broker, packets);
-                    Either::B(client)
+                .and_then(|(connect, packets)| match connect {
+                    Some(connect) => Either::A(Client::new(connect, broker, packets)),
+                    None => Either::B(future::ok(())),
                 })
                 .map_err(|e| {
                     error!("Connection error = {:?}", e);

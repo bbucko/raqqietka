@@ -1,91 +1,11 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io;
 use std::io::ErrorKind;
 
 use bytes::Bytes;
 
-use mqtt::*;
-
-impl Broker {
-    pub fn new() -> Self {
-        info!("Broker has started");
-        Broker {
-            clients: HashMap::new(),
-            subscriptions: HashMap::new(),
-        }
-    }
-
-    pub fn connect(&mut self, connect: Connect, tx: Tx) -> ClientId {
-        let client_id = connect.client_id.unwrap();
-        info!("Client: {:?} has connected to broker", &client_id);
-        self.clients.insert(client_id.to_owned(), tx);
-        client_id
-    }
-
-    pub fn disconnect(&mut self, client_id: ClientId) {
-        info!("Client: {:?} has disconnected from broker", client_id);
-        self.clients.remove(&client_id);
-    }
-
-    pub fn subscribe(&mut self, client: &Client, subscribe: Subscribe) -> Result<Vec<u8>, io::Error> {
-        let mut result = vec!();
-        for (topic, qos) in subscribe.topics {
-            info!("Client: {} has subscribed to topic: {} with qos {}", client, topic, qos);
-            self.subscriptions
-                .entry(topic.to_owned())
-                .or_insert_with(HashSet::new)
-                .insert(client.client_id.clone());
-
-            result.push(qos);
-        }
-
-        Ok(result)
-    }
-
-    pub fn publish(&mut self, publish: Publish) -> Result<(), io::Error> {
-        //enqueue for publishing
-        //save to LSM
-        let clients = &self.clients;
-
-        self.subscriptions.entry(publish.topic.clone()).or_default().retain(|client| {
-            if let Some(tx) = clients.get(client) {
-                let publish_packet = Packet::publish(publish.packet_id, publish.topic.to_owned(), publish.payload.clone(), publish.qos);
-                info!("Sending payload: {} to client: {}", publish_packet, client);
-                let _ = tx.unbounded_send(publish_packet);
-                true
-            } else {
-                info!("Removing disconnected client: {}", client);
-                false
-            }
-        });
-
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct Connect {
-    pub version: u8,
-    pub client_id: Option<ClientId>,
-    pub auth: Option<ConnectAuth>,
-    pub will: Option<Will>,
-    pub clean_session: bool,
-}
-
-#[derive(Debug)]
-pub struct ConnectAuth {
-    username: String,
-    password: Option<Bytes>,
-}
-
-#[derive(Debug)]
-pub struct Will {
-    qos: u8,
-    retain: bool,
-    topic: String,
-    message: Bytes,
-}
+use broker::{util, Connect, ConnectAuth, Publish, Subscribe, Will};
+use mqtt::{Packet, PacketType};
 
 impl Connect {
     pub fn from(packet: Packet) -> Result<Self, io::Error> {
@@ -99,6 +19,7 @@ impl Connect {
 
         let (version, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed version"))?;
         let (flags, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed flags"))?;
+        let flags = *flags;
 
         let clean_session = util::check_flag(flags, 1);
         let (_keep_alive, payload) = util::take_u18(&payload)?;
@@ -109,7 +30,7 @@ impl Connect {
             return Err(io::Error::new(ErrorKind::Other, "malformed client_id invalid length"));
         }
 
-        if !client_id.chars().all(|c| c.is_alphanumeric()) {
+        if !client_id.chars().all(char::is_alphanumeric) {
             //return 0x02
             return Err(io::Error::new(ErrorKind::Other, "malformed client_id invalid characters"));
         }
@@ -120,7 +41,6 @@ impl Connect {
 
         let will = if will_flag {
             let internal_payload = payload;
-
 
             let (will_topic, internal_payload) = util::take_string(&internal_payload)?;
             let (will_length, internal_payload) = util::take_u18(&internal_payload)?;
@@ -187,11 +107,7 @@ impl Publish {
         let qos = packet.flags >> 1 & 3;
         let (topic, payload) = util::take_string(&payload)?;
 
-        let (packet_id, payload) = if qos == 0 {
-            (0, payload)
-        } else {
-            util::take_u18(&payload)?
-        };
+        let (packet_id, payload) = if qos == 0 { (0, payload) } else { util::take_u18(&payload)? };
 
         Ok(Publish {
             packet_id,
@@ -200,13 +116,6 @@ impl Publish {
             payload: Bytes::from(payload),
         })
     }
-}
-
-pub struct Publish {
-    pub packet_id: u16,
-    pub topic: Topic,
-    pub qos: u8,
-    pub payload: Bytes,
 }
 
 impl Subscribe {
@@ -236,11 +145,6 @@ impl Subscribe {
 
         Ok(Subscribe { packet_id, topics })
     }
-}
-
-pub struct Subscribe {
-    pub packet_id: u16,
-    pub topics: HashSet<(Topic, u8)>,
 }
 
 #[cfg(test)]
@@ -291,7 +195,9 @@ mod tests {
     #[test]
     fn test_parsing_connect_with_will_and_auth() {
         let packet = Packet {
-            payload: Some(Bytes::from(&b"\0\x04MQTT\x04\xc6\0<\0\x03abc\0\x0b/will/topic\0\x0cwill message\0\x08username\0\x08password"[..])),
+            payload: Some(Bytes::from(
+                &b"\0\x04MQTT\x04\xc6\0<\0\x03abc\0\x0b/will/topic\0\x0cwill message\0\x08username\0\x08password"[..],
+            )),
             packet_type: PacketType::CONNECT,
             flags: 0,
         };

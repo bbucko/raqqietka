@@ -9,9 +9,8 @@ use bytes::BytesMut;
 use num_traits::FromPrimitive;
 use num_traits::ToPrimitive;
 
-use mqtt::Packet;
-use mqtt::PacketType;
 use mqtt::util;
+use mqtt::*;
 
 impl Packet {
     pub fn from(buffer: &mut BytesMut) -> Result<Option<Packet>, io::Error> {
