@@ -11,7 +11,8 @@ futures = "0.1"
 bytes = "0.4"
 enum-primitive-derive = "0.1"
 num-traits = "^0.1"
-regex = "1"
+regex-cache = "0.2"
+
 
 [dev-dependencies]
 matches = "0.1"

@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt::{Error, Formatter};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use regex::Regex;
+use regex_cache::RegexCache;
 
 use mqtt::*;
 
@@ -13,11 +14,11 @@ mod client;
 mod packets;
 mod util;
 
-#[derive(Debug)]
 pub struct Broker {
     clients: HashMap<ClientId, Tx>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
-    regex_cache: HashMap<String, Regex>,
+    //change to LRU cache
+    regex_cache: RegexCache,
 }
 
 #[derive(Debug)]
@@ -73,7 +74,7 @@ impl Broker {
         Broker {
             clients: HashMap::new(),
             subscriptions: HashMap::new(),
-            regex_cache: HashMap::new(),
+            regex_cache: RegexCache::new(1024),
         }
     }
 
@@ -105,11 +106,8 @@ impl Broker {
 
         for (subscription, client_ips) in subscriptions {
             if subscription.contains("*") || subscription.contains("?") {
-                let wildcard_topic = self
-                    .regex_cache
-                    .entry(subscription.clone())
-                    .or_insert_with(|| Regex::new(subscription).unwrap());
-
+                //TODO: replace wildcards with regexp
+                let wildcard_topic = self.regex_cache.compile(subscription).unwrap();
                 if wildcard_topic.is_match(&publish.topic) {
                     client_ips.retain(|client| Broker::publish_msg_or_clear(clients, client, &publish))
                 }
@@ -136,6 +134,12 @@ impl Broker {
             info!("Removing disconnected client: {}", client);
             false
         }
+    }
+}
+
+impl std::fmt::Debug for Broker {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(f, "Broker(clients#: {}, subscriptions#: {})", self.clients.len(), self.subscriptions.len())
     }
 }
 
@@ -218,6 +222,7 @@ mod tests {
     fn subscribe_client(broker: &mut Broker, client_id: &str, topics: &[&str]) {
         let topics = topics.iter().map(|str| (str.to_string(), 1)).collect();
         let subscribe = Subscribe { packet_id: 0, topics };
+
         assert!(broker.subscribe(&client_id.to_string(), subscribe).is_ok());
     }
 

@@ -6,7 +6,7 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 extern crate num_traits;
-extern crate regex;
+extern crate regex_cache;
 extern crate tokio;
 
 use std::sync::{Arc, Mutex};
