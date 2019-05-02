@@ -9,8 +9,12 @@ mod util;
 
 pub type ClientId = String;
 pub type Topic = String;
+
 pub type Tx = mpsc::UnboundedSender<Packet>;
 pub type Rx = mpsc::UnboundedReceiver<Packet>;
+
+//pub type Tx = mpsc::Sender<Packet>;
+//pub type Rx = mpsc::Receiver<Packet>;
 
 #[derive(Debug)]
 pub struct Packet {

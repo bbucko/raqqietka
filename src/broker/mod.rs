@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use regex_cache::RegexCache;
+use regex_cache::{Regex, RegexCache};
 
 use mqtt::*;
 
@@ -17,7 +17,6 @@ mod util;
 pub struct Broker {
     clients: HashMap<ClientId, Tx>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
-    //change to LRU cache
     regex_cache: RegexCache,
 }
 
@@ -89,6 +88,10 @@ impl Broker {
         let mut result = vec![];
         for (topic, qos) in subscribe.topics {
             info!("Client: {} has subscribed to topic: {} with qos {}", client_id, topic, qos);
+            if !Broker::validate_subscribe(&topic) {
+                error!("Invalid topic filter: {}", topic);
+            }
+
             self.subscriptions
                 .entry(topic.to_owned())
                 .or_insert_with(HashSet::new)
@@ -103,12 +106,17 @@ impl Broker {
     pub fn publish(&mut self, publish: Publish) -> Result<(), io::Error> {
         let subscriptions = &mut self.subscriptions;
         let clients = &self.clients;
+        if !Broker::validate_publish(&publish.topic) {
+            error!("Invalid topic path: {}", &publish.topic);
+        }
 
         for (subscription, client_ips) in subscriptions {
-            if subscription.contains("*") || subscription.contains("?") {
-                //TODO: replace wildcards with regexp
-                let wildcard_topic = self.regex_cache.compile(subscription).unwrap();
+            if Broker::is_wildcard(subscription) {
+                let fixed_subscription = Broker::fix_regexp(subscription);
+                debug!("Changed {} to {}", subscription, fixed_subscription);
+                let wildcard_topic = self.regex_cache.compile(&fixed_subscription).unwrap();
                 if wildcard_topic.is_match(&publish.topic) {
+                    info!("Matching {} to {}", fixed_subscription, &publish.topic);
                     client_ips.retain(|client| Broker::publish_msg_or_clear(clients, client, &publish))
                 }
             } else if subscription.eq(&publish.topic) {
@@ -117,6 +125,29 @@ impl Broker {
         }
 
         Ok(())
+    }
+
+    fn fix_regexp(subscription: &String) -> String {
+        let mut fixed_subscription = String::new();
+        fixed_subscription.push_str("^");
+        fixed_subscription.push_str(subscription);
+        fixed_subscription = str::replace(&fixed_subscription, "+", "\\w*");
+        fixed_subscription = str::replace(&fixed_subscription, "#", "(/?\\w*)*");
+        fixed_subscription.push_str("$");
+        dbg!(&fixed_subscription);
+        fixed_subscription
+    }
+
+    fn validate_publish(topic: &str) -> bool {
+        Regex::new(r"^(/?(\w*))*$").unwrap().is_match(topic)
+    }
+
+    fn validate_subscribe(filter: &str) -> bool {
+        Regex::new(r"^(/?(\w*|\+))*#?$").unwrap().is_match(filter)
+    }
+
+    fn is_wildcard(subscription: &String) -> bool {
+        subscription.contains("+") || subscription.ends_with("#")
     }
 
     pub fn disconnect(&mut self, client_id: ClientId) {
@@ -146,8 +177,23 @@ impl std::fmt::Debug for Broker {
 #[cfg(test)]
 mod tests {
     use futures::sync::mpsc;
+    use futures::{Future, Stream};
 
     use super::*;
+
+    #[test]
+    fn test_subscription_topic() {
+        let re = Regex::new("^([a-zA-Z0-9/])+$").unwrap();
+        assert!(re.is_match("/a/b/c"));
+        assert!(re.is_match("/"));
+        assert!(re.is_match("///"));
+    }
+
+    #[test]
+    fn test_regexp() {
+        let re = Regex::new("/a/[a-zA-Z0-9]/c").unwrap();
+        assert!(re.is_match("/a/b/c"));
+    }
 
     #[test]
     fn test_broker_connect() {
@@ -171,13 +217,52 @@ mod tests {
     }
 
     #[test]
-    fn test_broker_subscribe_with_wildcard_topics() {
+    fn test_broker_subscribe_with_wildcard_topics_single_level_last() {
         let mut broker = Broker::new();
         let client_id = "client_id";
         register_client(&mut broker, client_id);
-        subscribe_client(&mut broker, client_id, &["/topic/*", "/topic/?", "/topic/?/first"]);
+        subscribe_client(&mut broker, client_id, &["/topic/+"]);
 
-        for topic in vec!["/topic/*", "/topic/?", "/topic/?/first"] {
+        for topic in vec!["/topic/+"] {
+            assert!(broker.subscriptions.contains_key(topic));
+            assert!(broker.subscriptions.get(topic).unwrap().contains(client_id));
+        }
+    }
+
+    #[test]
+    fn test_broker_subscribe_with_wildcard_topics_single_level_middle() {
+        let mut broker = Broker::new();
+        let client_id = "client_id";
+        register_client(&mut broker, client_id);
+        subscribe_client(&mut broker, client_id, &["/topic/+/topic"]);
+
+        for topic in vec!["/topic/+/topic"] {
+            assert!(broker.subscriptions.contains_key(topic));
+            assert!(broker.subscriptions.get(topic).unwrap().contains(client_id));
+        }
+    }
+
+    #[test]
+    fn test_broker_subscribe_with_wildcard_topics_multilevel_level_last() {
+        let mut broker = Broker::new();
+        let client_id = "client_id";
+        register_client(&mut broker, client_id);
+        subscribe_client(&mut broker, client_id, &["/topic/?"]);
+
+        for topic in vec!["/topic/?"] {
+            assert!(broker.subscriptions.contains_key(topic));
+            assert!(broker.subscriptions.get(topic).unwrap().contains(client_id));
+        }
+    }
+
+    #[test]
+    fn test_broker_subscribe_with_wildcard_topics_multilevel_level_middle() {
+        let mut broker = Broker::new();
+        let client_id = "client_id";
+        register_client(&mut broker, client_id);
+        subscribe_client(&mut broker, client_id, &["/topic/?/topic"]);
+
+        for topic in vec!["/topic/?/topic"] {
             assert!(broker.subscriptions.contains_key(topic));
             assert!(broker.subscriptions.get(topic).unwrap().contains(client_id));
         }
@@ -187,7 +272,7 @@ mod tests {
     fn test_broker_publish_with_plain() {
         let mut broker = Broker::new();
         let client_id = "client_id";
-        register_client(&mut broker, client_id);
+        let mut rx = register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic", "/second/topic", "/third/topic"]);
 
         for topic in vec!["/topic", "/second/topic", "/third/topic"] {
@@ -199,16 +284,23 @@ mod tests {
             };
             assert!(broker.publish(publish).is_ok());
         }
+
+        rx.close();
+        let packets = rx.collect().wait().unwrap();
+        assert_eq!(packets.len(), 3);
+        assert_eq!(packets[0].payload, Some(Bytes::from("\0\x06/topic\0\x01test")));
+        assert_eq!(packets[1].payload, Some(Bytes::from("\0\r/second/topic\0\x01test")));
+        assert_eq!(packets[2].payload, Some(Bytes::from("\0\x0c/third/topic\0\x01test")));
     }
 
     #[test]
-    fn test_broker_publish_with_wildcard() {
+    fn test_broker_publish_with_wildcard_one_level() {
         let mut broker = Broker::new();
         let client_id = "client_id";
-        register_client(&mut broker, client_id);
-        subscribe_client(&mut broker, client_id, &["/topic/*", "/topic/?", "/topic/?/first"]);
+        let mut rx = register_client(&mut broker, client_id);
+        subscribe_client(&mut broker, client_id, &["/topic/+"]);
 
-        for topic in vec!["/topic/oneLevel", "/topic/two/levels", "/topic/oneLevel/first"] {
+        for topic in vec!["/topic/oneLevel", "/topic/two/levels", "/topic/level/first", "/different/topic"] {
             let publish = Publish {
                 packet_id: 1,
                 topic: topic.to_owned(),
@@ -217,6 +309,59 @@ mod tests {
             };
             assert!(broker.publish(publish).is_ok());
         }
+
+        rx.close();
+        let packets = rx.collect().wait().unwrap();
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
+    }
+
+    #[test]
+    fn test_broker_publish_with_wildcard_one_level_in_the_middle() {
+        let mut broker = Broker::new();
+        let client_id = "client_id";
+        let mut rx = register_client(&mut broker, client_id);
+        subscribe_client(&mut broker, client_id, &["/topic/+/first"]);
+
+        for topic in vec!["/topic/oneLevel", "/topic/two/levels", "/topic/oneLevel/first", "/different/topic"] {
+            let publish = Publish {
+                packet_id: 1,
+                topic: topic.to_owned(),
+                qos: 0,
+                payload: Bytes::from("test"),
+            };
+            assert!(broker.publish(publish).is_ok());
+        }
+
+        rx.close();
+        let packets = rx.collect().wait().unwrap();
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x01test")));
+    }
+
+    #[test]
+    fn test_broker_publish_with_wildcard_multilevel_at_the_end() {
+        let mut broker = Broker::new();
+        let client_id = "client_id";
+        let mut rx = register_client(&mut broker, client_id);
+        subscribe_client(&mut broker, client_id, &["/topic/#"]);
+
+        for topic in vec!["/topic/oneLevel", "/topic/two/levels", "/topic/oneLevel/first", "/different/topic"] {
+            let publish = Publish {
+                packet_id: 1,
+                topic: topic.to_owned(),
+                qos: 0,
+                payload: Bytes::from("test"),
+            };
+            assert!(broker.publish(publish).is_ok());
+        }
+
+        rx.close();
+        let packets = rx.collect().wait().unwrap();
+        assert_eq!(packets.len(), 3);
+        assert_eq!(packets[0].payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
+        assert_eq!(packets[1].payload, Some(Bytes::from("\0\x11/topic/two/levels\0\x01test")));
+        assert_eq!(packets[1].payload, Some(Bytes::from("\0\x11/topic/two/levels\0\x01test")));
     }
 
     fn subscribe_client(broker: &mut Broker, client_id: &str, topics: &[&str]) {
@@ -226,7 +371,7 @@ mod tests {
         assert!(broker.subscribe(&client_id.to_string(), subscribe).is_ok());
     }
 
-    fn register_client(broker: &mut Broker, client_id: &str) {
+    fn register_client(broker: &mut Broker, client_id: &str) -> Rx {
         let connect = Connect {
             version: 3,
             client_id: Some(client_id.to_string()),
@@ -234,8 +379,9 @@ mod tests {
             will: None,
             clean_session: false,
         };
-        let (tx, _) = mpsc::unbounded();
+        let (tx, rx) = mpsc::unbounded();
 
         broker.connect(connect, tx);
+        rx
     }
 }
