@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::fmt;
 use std::fmt::Error;
 use std::fmt::Formatter;
@@ -9,7 +10,7 @@ use std::sync::Mutex;
 use futures::sync::mpsc;
 use futures::{Async, Future, Stream};
 
-use broker::{Broker, Client, Connect, Publish, Subscribe};
+use broker::{Broker, Client, Puback, Publish, Subscribe};
 use mqtt::{Packet, PacketType, Packets};
 
 impl Future for Client {
@@ -31,29 +32,37 @@ impl Future for Client {
                 let mut broker = self.broker.lock().expect("missing broker");
 
                 match packet.packet_type {
-                    PacketType::CONNECT => {
-                        info!("Duplicated CONNECT. Client disconnected: {}", self);
-                        return Ok(Async::Ready(()));
-                    }
                     PacketType::SUBSCRIBE => {
-                        let subscribe = Subscribe::from(packet)?;
+                        let subscribe: Subscribe = packet.try_into()?;
                         let packet_id = subscribe.packet_id;
 
                         if let Ok(results) = broker.subscribe(&self.client_id, subscribe) {
-                            self.packets.buffer(Packet::suback(packet_id, &results));
+                            let response = Packet::suback(packet_id, &results);
+                            self.packets.buffer(response);
                         } else {
                             return Ok(Async::Ready(()));
                         }
                     }
                     PacketType::PUBLISH => {
-                        let publish = Publish::from(packet)?;
+                        let publish: Publish = packet.try_into()?;
                         if publish.qos == 1 {
-                            self.packets.buffer(Packet::puback(publish.packet_id));
+                            let response = Packet::puback(publish.packet_id);
+                            self.packets.buffer(response);
                         }
 
                         broker.publish(publish)?;
                     }
+                    PacketType::PUBACK => {
+                        let puback: Puback = packet.try_into()?;
+
+                        broker.acknowledge(puback.packet_id)?;
+                        info!("PUBACK");
+                    }
                     PacketType::PINGREQ => self.packets.buffer(Packet::pingres()),
+                    PacketType::CONNECT => {
+                        info!("Duplicated CONNECT. Client disconnected: {}", self);
+                        return Ok(Async::Ready(()));
+                    }
                     PacketType::DISCONNECT => {
                         info!("Client disconnected: {}", self);
                         return Ok(Async::Ready(()));
@@ -89,7 +98,7 @@ impl Client {
         let addr = packets.socket.peer_addr().unwrap();
         let (outgoing, incoming) = mpsc::unbounded();
 
-        let connect = Connect::from(packet).expect("Malformed connect");
+        let connect = packet.try_into().expect("Malformed connect");
 
         let client_id = broker.lock().expect("Missing broker").connect(connect, outgoing);
 

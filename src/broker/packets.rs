@@ -1,15 +1,17 @@
 use std::collections::HashSet;
+use std::convert::TryFrom;
 use std::io;
 use std::io::ErrorKind;
 
 use bytes::Bytes;
 
-use broker::{util, Connect, ConnectAuth, Publish, Subscribe, Will};
+use broker::{util, Connect, ConnectAuth, Puback, Publish, Subscribe, Will};
 use mqtt::{Packet, PacketType};
 
-impl Connect {
-    pub fn from(packet: Packet) -> Result<Self, io::Error> {
-        //rewrite to try_from
+impl TryFrom<Packet> for Connect {
+    type Error = io::Error;
+
+    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
         assert_eq!(PacketType::CONNECT, packet.packet_type);
 
         let payload = packet.payload.ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed payload"))?;
@@ -97,8 +99,10 @@ impl Connect {
     }
 }
 
-impl Publish {
-    pub fn from(packet: Packet) -> Result<Self, io::Error> {
+impl TryFrom<Packet> for Publish {
+    type Error = io::Error;
+
+    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
         //rewrite to try_from
         assert_eq!(PacketType::PUBLISH, packet.packet_type);
 
@@ -118,8 +122,18 @@ impl Publish {
     }
 }
 
-impl Subscribe {
-    pub fn from(packet: Packet) -> Result<Self, io::Error> {
+impl TryFrom<Packet> for Puback {
+    type Error = io::Error;
+
+    fn try_from(_value: Packet) -> Result<Self, Self::Error> {
+        unimplemented!()
+    }
+}
+
+impl TryFrom<Packet> for Subscribe {
+    type Error = io::Error;
+
+    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
         //rewrite to try_from
         assert_eq!(PacketType::SUBSCRIBE, packet.packet_type);
 
@@ -149,6 +163,8 @@ impl Subscribe {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::TryInto;
+
     use super::*;
 
     #[test]
@@ -159,7 +175,7 @@ mod tests {
             flags: 0,
         };
 
-        let connect = Connect::from(packet).unwrap();
+        let connect: Connect = packet.try_into().unwrap();
         assert_eq!(4, connect.version);
         assert_eq!(true, connect.clean_session);
         assert_eq!(Some("abc".to_string()), connect.client_id);
@@ -179,7 +195,7 @@ mod tests {
             flags: 0,
         };
 
-        let connect = Connect::from(packet).unwrap();
+        let connect: Connect = packet.try_into().unwrap();
         assert_eq!(4, connect.version);
         assert_eq!(true, connect.clean_session);
         assert_eq!(Some("abc".to_string()), connect.client_id);
@@ -202,7 +218,7 @@ mod tests {
             flags: 0,
         };
 
-        let connect = Connect::from(packet).unwrap();
+        let connect: Connect = packet.try_into().unwrap();
         assert_eq!(4, connect.version);
         assert_eq!(true, connect.clean_session);
         assert_eq!(Some("abc".to_string()), connect.client_id);
@@ -225,7 +241,7 @@ mod tests {
             flags: 0,
         };
 
-        let connect = Connect::from(packet).unwrap();
+        let connect: Connect = packet.try_into().unwrap();
         assert_eq!(4, connect.version);
         assert_eq!(true, connect.clean_session);
         assert_eq!(Some("abc".to_string()), connect.client_id);
@@ -242,7 +258,7 @@ mod tests {
             packet_type: PacketType::CONNECT,
             flags: 0,
         };
-        let result = Connect::from(packet);
+        let result: Result<Connect, io::Error> = packet.try_into();
 
         assert!(result.is_err());
         assert_eq!("malformed client_id invalid characters", result.err().unwrap().to_string());
@@ -256,7 +272,7 @@ mod tests {
             flags: 0,
         };
 
-        let publish = Publish::from(packet).unwrap();
+        let publish: Publish = packet.try_into().unwrap();
         assert_eq!(0, publish.qos);
         assert_eq!("/something", publish.topic);
         assert_eq!(Bytes::from("abc"), publish.payload);
@@ -270,7 +286,7 @@ mod tests {
             flags: 0b0000_0010,
         };
 
-        let publish = Publish::from(packet).unwrap();
+        let publish: Publish = packet.try_into().unwrap();
         assert_eq!(1, publish.qos);
         assert_eq!("/something/else", publish.topic);
         assert_eq!(Bytes::from("abc"), publish.payload);
@@ -284,7 +300,7 @@ mod tests {
             flags: 0b0000_0010,
         };
 
-        let subscribe = Subscribe::from(packet).unwrap();
+        let subscribe: Subscribe = packet.try_into().unwrap();
         assert_eq!(1, subscribe.topics.len());
         assert!(subscribe.topics.contains(&(String::from("/something"), 0)));
     }
@@ -297,7 +313,7 @@ mod tests {
             flags: 0b0000_0010,
         };
 
-        let subscribe = Subscribe::from(packet).unwrap();
+        let subscribe: Subscribe = packet.try_into().unwrap();
         assert_eq!(2, subscribe.topics.len());
         assert!(subscribe.topics.contains(&(String::from("/qos"), 0)));
         assert!(subscribe.topics.contains(&(String::from("/something/else"), 1)));
