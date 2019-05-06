@@ -22,6 +22,8 @@ use mqtt::*;
 mod broker;
 mod mqtt;
 
+pub type MQTTError = String;
+
 fn main() -> Result<(), Box<std::error::Error>> {
     simple_logger::init_with_level(Level::Info).unwrap();
 
@@ -40,7 +42,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
 
             let connection = packets
                 .into_future()
-                .map_err(|(e, _)| e)
+                .map_err(|(e, _)| e.to_string())
                 .and_then(|(connect, packets)| match connect {
                     Some(connect) => Either::A(Client::new(connect, broker, packets)),
                     None => Either::B(future::ok(())),

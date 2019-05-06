@@ -1,17 +1,17 @@
-use std::io;
+use MQTTError;
 
-pub fn take_u18(bytes: &[u8]) -> Result<(u16, &[u8]), io::Error> {
+pub fn take_u18(bytes: &[u8]) -> Result<(u16, &[u8]), MQTTError> {
     if bytes.len() < 2 {
-        return Err(io::Error::new(io::ErrorKind::Other, "malformed"));
+        return Err(format!("malformed take_u18: {}", bytes.len()));
     }
     let (length_bytes, bytes) = bytes.split_at(2);
     Ok(((u16::from(length_bytes[0]) << 8) + u16::from(length_bytes[1]), bytes))
 }
 
-pub fn take_string(bytes: &[u8]) -> Result<(String, &[u8]), io::Error> {
-    let (string_length, bytes) = take_u18(bytes).map_err(|_| io::Error::new(io::ErrorKind::Other, "invalid string length"))?;
+pub fn take_string(bytes: &[u8]) -> Result<(String, &[u8]), MQTTError> {
+    let (string_length, bytes) = take_u18(bytes).map_err(|_| "invalid string length")?;
     let (string_bytes, bytes) = bytes.split_at(string_length as usize);
-    let string = String::from_utf8(string_bytes.to_vec()).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let string = String::from_utf8(string_bytes.to_vec()).map_err(|e| format!("malformed: {}", e))?;
     Ok((string, bytes))
 }
 

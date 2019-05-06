@@ -1,19 +1,18 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt;
 use std::fmt::Formatter;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::{fmt, io};
 
 use bytes::Bytes;
 
 use mqtt::*;
+use MQTTError;
 
 mod client;
 mod packets;
 mod util;
-
-type BrokerError = io::Error;
 
 pub struct Broker {
     clients: HashMap<ClientId, Tx>,
@@ -88,7 +87,7 @@ impl Broker {
         client_id
     }
 
-    pub fn subscribe(&mut self, client_id: &ClientId, subscribe: Subscribe) -> Result<Vec<u8>, BrokerError> {
+    pub fn subscribe(&mut self, client_id: &str, subscribe: Subscribe) -> Result<Vec<u8>, MQTTError> {
         let mut result = vec![];
         for (topic, qos) in subscribe.topics {
             info!("Client: {} has subscribed to topic: {} with qos {}", client_id, topic, qos);
@@ -98,7 +97,7 @@ impl Broker {
             self.subscriptions
                 .entry(topic.to_owned())
                 .or_insert_with(HashSet::new)
-                .insert(client_id.clone());
+                .insert(client_id.to_string());
 
             result.push(qos);
         }
@@ -106,7 +105,7 @@ impl Broker {
         Ok(result)
     }
 
-    pub fn publish(&mut self, publish: Publish) -> Result<(), BrokerError> {
+    pub fn publish(&mut self, publish: Publish) -> Result<(), MQTTError> {
         let subscriptions = &mut self.subscriptions;
         let clients = &self.clients;
 
@@ -121,13 +120,13 @@ impl Broker {
         Ok(())
     }
 
-    pub fn acknowledge(&mut self, _packet_id: u16) -> Result<(), io::Error> {
+    pub fn acknowledge(&mut self, _packet_id: u16) -> Result<(), MQTTError> {
         Ok(())
     }
 
     fn filter_matches_topic(subscription: &str, topic: &str) -> bool {
-        let mut sub_iter = subscription.chars().into_iter();
-        let mut topic_iter = topic.chars().into_iter();
+        let mut sub_iter = subscription.chars();
+        let mut topic_iter = topic.chars();
 
         loop {
             let sub_char = sub_iter.next();
@@ -160,41 +159,41 @@ impl Broker {
         }
     }
 
-    fn validate_publish(topic: &str) -> Result<(), BrokerError> {
+    fn validate_publish(topic: &str) -> Result<(), MQTTError> {
         if topic.chars().all(|c| (char::is_alphanumeric(c) || c == '/') && c != '#' && c != '+') {
             return Ok(());
         }
-        return Err(Broker::error("invalid_topic_path"));
+        Err(format!("invalid_topic_path: {}", topic))
     }
 
-    fn validate_subscribe(filter: &str) -> Result<(), BrokerError> {
+    fn validate_subscribe(filter: &str) -> Result<(), String> {
         let mut peekable = filter.chars().peekable();
         loop {
             match peekable.next() {
                 None => return Ok(()),
                 Some('#') => {
                     if peekable.peek().is_some() {
-                        return Err(Broker::error("invalid_topic_filter"));
+                        return Err(format!("invalid_topic_filter: {}", filter));
                     }
                 }
                 Some('+') => {
                     if let Some(&next) = peekable.peek() {
                         if next != '/' {
-                            return Err(Broker::error("invalid_topic_filter"));
+                            return Err(format!("invalid_topic_filter: {}", filter));
                         }
                     }
                 }
                 Some('/') => {
                     if let Some(&next) = peekable.peek() {
                         if !(next == '+' || next == '/' || next == '#' || char::is_alphanumeric(next)) {
-                            return Err(Broker::error("invalid_topic_filter"));
+                            return Err(format!("invalid_topic_filter: {}", filter));
                         }
                     }
                 }
                 Some(_) => {
                     if let Some(&next) = peekable.peek() {
                         if !(next == '/' || char::is_alphanumeric(next)) {
-                            return Err(Broker::error("invalid_topic_filter"));
+                            return Err(format!("invalid_topic_filter: {}", filter));
                         }
                     }
                 }
@@ -207,7 +206,7 @@ impl Broker {
         self.clients.remove(&client_id);
     }
 
-    fn publish_msg_or_clear(clients: &HashMap<ClientId, Tx>, client: &String, publish: &Publish) -> bool {
+    fn publish_msg_or_clear(clients: &HashMap<ClientId, Tx>, client: &str, publish: &Publish) -> bool {
         if let Some(tx) = clients.get(client) {
             let publish_packet = Packet::publish(publish.packet_id, publish.topic.to_owned(), publish.payload.clone(), publish.qos);
             info!("Sending payload: {} to client: {}", publish_packet, client);
@@ -217,10 +216,6 @@ impl Broker {
             info!("Removing disconnected client: {}", client);
             false
         }
-    }
-
-    fn error(msg: &str) -> BrokerError {
-        return io::Error::new(io::ErrorKind::Other, msg);
     }
 }
 

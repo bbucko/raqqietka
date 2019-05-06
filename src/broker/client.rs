@@ -2,8 +2,6 @@ use std::convert::TryInto;
 use std::fmt;
 use std::fmt::Error;
 use std::fmt::Formatter;
-use std::io;
-use std::io::ErrorKind;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -12,10 +10,11 @@ use futures::{Async, Future, Stream};
 
 use broker::{Broker, Client, Puback, Publish, Subscribe};
 use mqtt::{Packet, PacketType, Packets};
+use MQTTError;
 
 impl Future for Client {
     type Item = ();
-    type Error = io::Error;
+    type Error = MQTTError;
 
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
         if self.disconnected {
@@ -123,8 +122,8 @@ impl Client {
         self.buffer(Packet::connack());
     }
 
-    fn handle_incoming_packets(&mut self) -> Result<(), io::Error> {
-        let incoming_poll = self.incoming.poll().map_err(|_| io::Error::new(ErrorKind::Other, "something went wrong"))?;
+    fn handle_incoming_packets(&mut self) -> Result<(), MQTTError> {
+        let incoming_poll = self.incoming.poll().map_err(|_| "something went wrong")?;
 
         if let Async::Ready(Some(packet)) = incoming_poll {
             self.packets.buffer(packet);

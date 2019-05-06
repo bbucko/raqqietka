@@ -5,7 +5,7 @@ use tokio::net::TcpStream;
 use tokio::prelude::*;
 
 use mqtt::Packets;
-use Packet;
+use {MQTTError, Packet};
 
 impl Packets {
     pub fn new(socket: TcpStream) -> Packets {
@@ -31,9 +31,9 @@ impl Packets {
         self.wr.put(bytes);
     }
 
-    pub fn poll_flush(&mut self) -> Poll<(), io::Error> {
+    pub fn poll_flush(&mut self) -> Poll<(), MQTTError> {
         while !self.wr.is_empty() {
-            let n = try_ready!(self.socket.poll_write(&self.wr));
+            let n = try_ready!(self.socket.poll_write(&self.wr).map_err(|err| format!("{}", err)));
             assert!(n > 0);
             self.wr.advance(n);
         }
@@ -50,12 +50,14 @@ impl Packets {
 
 impl Stream for Packets {
     type Item = Packet;
-    type Error = io::Error;
+    type Error = MQTTError;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        let sock_closed = self.fill_read()?.is_ready();
+        let sock_closed = self.fill_read().map_err(|err| format!("unknown error: {}", err))?.is_ready();
 
-        Packet::from(&mut self.rd).map(|packet| Packets::handle_socket(packet, sock_closed))
+        Packet::from(&mut self.rd)
+            .map(|packet| Packets::handle_socket(packet, sock_closed))
+            .map_err(|err| format!("unknown error: {}", err))
     }
 }
 

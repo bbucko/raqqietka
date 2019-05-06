@@ -1,26 +1,25 @@
 use std::collections::HashSet;
 use std::convert::TryFrom;
-use std::io;
-use std::io::ErrorKind;
 
 use bytes::Bytes;
 
 use broker::{util, Connect, ConnectAuth, Puback, Publish, Subscribe, Will};
 use mqtt::{Packet, PacketType};
+use MQTTError;
 
 impl TryFrom<Packet> for Connect {
-    type Error = io::Error;
+    type Error = MQTTError;
 
     fn try_from(packet: Packet) -> Result<Self, Self::Error> {
         assert_eq!(PacketType::CONNECT, packet.packet_type);
 
-        let payload = packet.payload.ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed payload"))?;
+        let payload = packet.payload.ok_or_else(|| "malformed payload")?;
 
         let (proto_name, payload) = util::take_string(&payload)?;
         assert_eq!(proto_name, "MQTT".to_string());
 
-        let (version, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed version"))?;
-        let (flags, payload) = payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed flags"))?;
+        let (version, payload) = payload.split_first().ok_or_else(|| "malformed version")?;
+        let (flags, payload) = payload.split_first().ok_or_else(|| "malformed flags")?;
         let flags = *flags;
 
         let clean_session = util::check_flag(flags, 1);
@@ -29,12 +28,12 @@ impl TryFrom<Packet> for Connect {
         let (client_id, mut payload) = util::take_string(&payload)?;
 
         if client_id.is_empty() || client_id.len() > 23 {
-            return Err(io::Error::new(ErrorKind::Other, "malformed client_id invalid length"));
+            return Err(format!("malformed client_id invalid length: {}", client_id.len()));
         }
 
         if !client_id.chars().all(char::is_alphanumeric) {
             //return 0x02
-            return Err(io::Error::new(ErrorKind::Other, "malformed client_id invalid characters"));
+            return Err(format!("malformed client_id invalid characters: {}", client_id));
         }
 
         let will_flag = util::check_flag(flags, 2);
@@ -58,7 +57,7 @@ impl TryFrom<Packet> for Connect {
             })
         } else {
             if will_retain || will_qos != 0 {
-                return Err(io::Error::new(ErrorKind::Other, "malformed will"));
+                return Err(format!("malformed will: retain: {}; qos: {}", will_retain, will_qos));
             }
 
             None
@@ -100,13 +99,13 @@ impl TryFrom<Packet> for Connect {
 }
 
 impl TryFrom<Packet> for Publish {
-    type Error = io::Error;
+    type Error = MQTTError;
 
     fn try_from(packet: Packet) -> Result<Self, Self::Error> {
         //rewrite to try_from
         assert_eq!(PacketType::PUBLISH, packet.packet_type);
 
-        let payload = packet.payload.ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
+        let payload = packet.payload.ok_or_else(|| "malformed")?;
 
         let qos = packet.flags >> 1 & 3;
         let (topic, payload) = util::take_string(&payload)?;
@@ -123,7 +122,7 @@ impl TryFrom<Packet> for Publish {
 }
 
 impl TryFrom<Packet> for Puback {
-    type Error = io::Error;
+    type Error = MQTTError;
 
     fn try_from(_value: Packet) -> Result<Self, Self::Error> {
         unimplemented!()
@@ -131,13 +130,13 @@ impl TryFrom<Packet> for Puback {
 }
 
 impl TryFrom<Packet> for Subscribe {
-    type Error = io::Error;
+    type Error = MQTTError;
 
     fn try_from(packet: Packet) -> Result<Self, Self::Error> {
         //rewrite to try_from
         assert_eq!(PacketType::SUBSCRIBE, packet.packet_type);
 
-        let payload = packet.payload.ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
+        let payload = packet.payload.ok_or_else(|| "malformed")?;
         let (packet_id, mut payload) = util::take_u18(&payload)?;
 
         let mut topics = HashSet::new();
@@ -151,7 +150,7 @@ impl TryFrom<Packet> for Subscribe {
 
             let (topic, topic_payload) = util::take_string(&topic_payload)?;
 
-            let (qos, topic_payload) = topic_payload.split_first().ok_or_else(|| io::Error::new(ErrorKind::Other, "malformed"))?;
+            let (qos, topic_payload) = topic_payload.split_first().ok_or_else(|| "malformed")?;
 
             topics.insert((topic, *qos));
             payload = topic_payload;
@@ -164,6 +163,8 @@ impl TryFrom<Packet> for Subscribe {
 #[cfg(test)]
 mod tests {
     use std::convert::TryInto;
+
+    use MQTTError;
 
     use super::*;
 
@@ -258,10 +259,10 @@ mod tests {
             packet_type: PacketType::CONNECT,
             flags: 0,
         };
-        let result: Result<Connect, io::Error> = packet.try_into();
+        let result: Result<Connect, MQTTError> = packet.try_into();
 
         assert!(result.is_err());
-        assert_eq!("malformed client_id invalid characters", result.err().unwrap().to_string());
+        assert_eq!("malformed client_id invalid characters: ;bc", result.err().unwrap().to_string());
     }
 
     #[test]
