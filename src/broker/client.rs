@@ -5,11 +5,11 @@ use std::fmt::Formatter;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use futures::{Async, Future, Stream};
 use futures::sync::mpsc;
+use futures::{Async, Future, Stream};
 
 use broker::{Broker, Client, Puback, Publish, Subscribe};
-use mqtt::{Packet, Packets, PacketType};
+use mqtt::{Packet, PacketType, Packets};
 use MQTTError;
 
 impl Future for Client {

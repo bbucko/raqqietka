@@ -49,9 +49,10 @@ impl Packet {
 
     pub fn publish(packet_identifier: u16, topic: String, payload: Bytes, qos: u8) -> Packet {
         let mut packet = BytesMut::new();
-        packet.put(util::encode_string(topic));
+        packet.extend(util::encode_string(topic));
+        packet.reserve(2);
         packet.put_u16_be(packet_identifier);
-        packet.put(payload);
+        packet.extend(payload);
 
         assert!(qos < 3);
         let flags = qos << 1;
