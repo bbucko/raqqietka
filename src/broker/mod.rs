@@ -120,7 +120,9 @@ impl Broker {
         Ok(())
     }
 
-    pub fn acknowledge(&mut self, _packet_id: u16) -> Result<(), MQTTError> {
+    pub fn acknowledge(&mut self, packet_id: u16) -> Result<(), MQTTError> {
+        info!("Acknowledging packet: {}", packet_id);
+
         Ok(())
     }
 
@@ -227,8 +229,8 @@ impl std::fmt::Debug for Broker {
 
 #[cfg(test)]
 mod tests {
-    use futures::sync::mpsc;
     use futures::{Future, Stream};
+    use futures::sync::mpsc;
 
     use super::*;
 

@@ -5,11 +5,11 @@ use std::fmt::Formatter;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use futures::sync::mpsc;
 use futures::{Async, Future, Stream};
+use futures::sync::mpsc;
 
 use broker::{Broker, Client, Puback, Publish, Subscribe};
-use mqtt::{Packet, PacketType, Packets};
+use mqtt::{Packet, Packets, PacketType};
 use MQTTError;
 
 impl Future for Client {
@@ -55,7 +55,6 @@ impl Future for Client {
                         let puback: Puback = packet.try_into()?;
 
                         broker.acknowledge(puback.packet_id)?;
-                        info!("PUBACK");
                     }
                     PacketType::PINGREQ => self.packets.buffer(Packet::pingres()),
                     PacketType::CONNECT => {

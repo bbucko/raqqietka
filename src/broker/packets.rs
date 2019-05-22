@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 
 use bytes::Bytes;
 
-use broker::{util, Connect, ConnectAuth, Puback, Publish, Subscribe, Will};
+use broker::{Connect, ConnectAuth, Puback, Publish, Subscribe, util, Will};
 use mqtt::{Packet, PacketType};
 use MQTTError;
 
@@ -124,8 +124,12 @@ impl TryFrom<Packet> for Publish {
 impl TryFrom<Packet> for Puback {
     type Error = MQTTError;
 
-    fn try_from(_value: Packet) -> Result<Self, Self::Error> {
-        unimplemented!()
+    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
+        assert_eq!(PacketType::PUBACK, packet.packet_type);
+        let payload = packet.payload.ok_or_else(|| "malformed")?;
+        let (packet_id,  payload) = util::take_u18(&payload)?;
+        assert!(payload.is_empty());
+        Ok(Puback { packet_id })
     }
 }
 
