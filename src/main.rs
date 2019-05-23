@@ -40,11 +40,16 @@ fn main() -> Result<(), Box<std::error::Error>> {
         .for_each(move |packets| {
             let broker = broker.clone();
 
+
             let connection = packets
                 .into_future()
                 .map_err(|(e, _)| e.to_string())
                 .and_then(|(connect, packets)| match connect {
-                    Some(connect) => Either::A(Client::new(connect, broker, packets)),
+                    Some(connect) => {
+                        let mut client = Client::new(connect, broker, packets);
+                        client.send_connack();
+                        Either::A(client)
+                    },
                     None => Either::B(future::ok(())),
                 })
                 .map_err(|e| {
