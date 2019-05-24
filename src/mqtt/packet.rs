@@ -23,7 +23,7 @@ impl Packet {
             return Ok(None);
         }
 
-        let packet_type = PacketType::from_u8(control_and_flags >> 4).expect("unknown packet type");
+        let packet_type = PacketType::from_u8(control_and_flags >> 4).expect(format!("unknown packet type: {}", (control_and_flags >> 4)).as_str());
         let flags = control_and_flags & 0b0000_1111;
 
         let (payload_length, header_length) = match util::decode_length(buffer, 1)? {

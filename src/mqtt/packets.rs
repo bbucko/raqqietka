@@ -1,5 +1,3 @@
-use std::io;
-
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
@@ -16,10 +14,10 @@ impl Packets {
         }
     }
 
-    fn fill_read(&mut self) -> Result<Async<()>, io::Error> {
+    fn fill_read(&mut self) -> Result<Async<()>, MQTTError> {
         loop {
             self.rd.reserve(1024);
-            if try_ready!(self.socket.read_buf(&mut self.rd)) == 0 {
+            if try_ready!(self.socket.read_buf(&mut self.rd).map_err(|err| format!("{}", err))) == 0 {
                 return Ok(Async::Ready(()));
             }
         }
@@ -40,7 +38,7 @@ impl Packets {
         Ok(Async::Ready(()))
     }
 
-    fn handle_socket(packet: Option<Packet>, sock_closed: bool) -> Async<Option<Packet>> {
+    fn socket_to_result(packet: Option<Packet>, sock_closed: bool) -> Async<Option<Packet>> {
         packet.map_or_else(
             || if sock_closed { Async::Ready(None) } else { Async::NotReady },
             |packet| Async::Ready(Some(packet)),
@@ -56,7 +54,7 @@ impl Stream for Packets {
         let sock_closed = self.fill_read().map_err(|err| format!("unknown error: {}", err))?.is_ready();
 
         Packet::from(&mut self.rd)
-            .map(|packet| Packets::handle_socket(packet, sock_closed))
+            .map(|packet| Packets::socket_to_result(packet, sock_closed))
             .map_err(|err| format!("unknown error: {}", err))
     }
 }

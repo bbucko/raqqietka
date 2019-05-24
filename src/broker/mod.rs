@@ -4,6 +4,7 @@ use std::fmt;
 use std::fmt::Formatter;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use bytes::Bytes;
 
@@ -25,8 +26,9 @@ pub struct Client {
     addr: SocketAddr,
     disconnected: bool,
     packets: Packets,
-    incoming: Rx,
+    pub incoming: Rx,
     broker: Arc<Mutex<Broker>>,
+    last_received_packet: SystemTime,
 }
 
 #[derive(Debug)]
@@ -113,6 +115,7 @@ impl Broker {
 
         for (subscription, client_ips) in subscriptions {
             if Broker::filter_matches_topic(subscription, &publish.topic) {
+                info!("Number of clients matched: {}", client_ips.len());
                 client_ips.retain(|client| Broker::publish_msg_or_clear(clients, client, &publish))
             }
         }
@@ -208,14 +211,13 @@ impl Broker {
         self.clients.remove(&client_id);
     }
 
-    fn publish_msg_or_clear(clients: &HashMap<ClientId, Tx>, client: &str, publish: &Publish) -> bool {
-        if let Some(tx) = clients.get(client) {
+    fn publish_msg_or_clear(clients: &HashMap<ClientId, Tx>, client_id: &ClientId, publish: &Publish) -> bool {
+        if let Some(tx) = clients.get(client_id) {
             let publish_packet = Packet::publish(publish.packet_id, publish.topic.to_owned(), publish.payload.clone(), publish.qos);
-            info!("Sending payload: {} to client: {}", publish_packet, client);
-            let _ = tx.unbounded_send(publish_packet);
-            true
+            info!("Sending payload: {} to client: {}", publish_packet, client_id);
+            tx.unbounded_send(publish_packet).is_ok()
         } else {
-            info!("Removing disconnected client: {}", client);
+            info!("Removing disconnected client: {}", client_id);
             false
         }
     }
@@ -229,8 +231,8 @@ impl std::fmt::Debug for Broker {
 
 #[cfg(test)]
 mod tests {
-    use futures::{Future, Stream};
     use futures::sync::mpsc;
+    use futures::{Future, Stream};
 
     use super::*;
 
