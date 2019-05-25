@@ -9,6 +9,8 @@ extern crate num_traits;
 extern crate regex_cache;
 extern crate tokio;
 
+use std::error;
+use std::fmt::{Display, Error, Formatter};
 use std::sync::{Arc, Mutex};
 
 use futures::future::{self, Either};
@@ -16,13 +18,44 @@ use log::Level;
 use tokio::net::TcpListener;
 use tokio::prelude::*;
 
+use ::MQTTError::OtherError;
 use broker::*;
 use mqtt::*;
 
 mod broker;
 mod mqtt;
 
-pub type MQTTError = String;
+
+#[derive(Debug)]
+pub enum MQTTError {
+    ClientError,
+    ServerError,
+    OtherError(String),
+}
+
+impl Display for MQTTError {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        match *self {
+            OtherError(ref err) => write!(f, "{}", err),
+            _ => {write!(f, "Error")}
+        }
+    }
+}
+
+impl error::Error for MQTTError {}
+
+impl From<&str> for MQTTError {
+    fn from(str: &str) -> Self {
+        MQTTError::OtherError(String::from(str))
+    }
+}
+
+impl From<String> for MQTTError {
+    fn from(str: String) -> Self {
+        MQTTError::OtherError(str)
+    }
+}
+
 
 fn main() -> Result<(), Box<std::error::Error>> {
     simple_logger::init_with_level(Level::Info).unwrap();
@@ -43,7 +76,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
 
             let connection = packets
                 .into_future()
-                .map_err(|(e, _)| e.to_string())
+                .map_err(|(e, _)| e)
                 .and_then(|(connect, packets)| match connect {
                     Some(connect) => {
                         let inner_broker = broker.clone();

@@ -1,11 +1,20 @@
-use bytes::{BufMut, Bytes, BytesMut};
+use std::io;
+
+use bytes::{Bytes, BytesMut};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 
-use mqtt::Packets;
 use {MQTTError, Packet};
+use mqtt::Packets;
 
- impl Packets {
+impl From<io::Error> for MQTTError {
+    fn from(_: io::Error) -> Self {
+        unimplemented!()
+    }
+}
+
+
+impl Packets {
     pub fn new(socket: TcpStream) -> Packets {
         Packets {
             socket,
@@ -14,35 +23,30 @@ use {MQTTError, Packet};
         }
     }
 
+    pub fn buffer(&mut self, packet: Packet) {
+        let bytes: Bytes = packet.into();
+        self.wr.extend(bytes);
+    }
+
     fn fill_read(&mut self) -> Result<Async<()>, MQTTError> {
         loop {
             self.rd.reserve(1024);
-            if try_ready!(self.socket.read_buf(&mut self.rd).map_err(|err| format!("{}", err))) == 0 {
+            let read = self.socket.read_buf(&mut self.rd);
+            let bytes_read = try_ready!(read);
+            if bytes_read == 0 {
                 return Ok(Async::Ready(()));
             }
         }
     }
 
-    pub fn buffer(&mut self, packet: Packet) {
-        let bytes: Bytes = packet.into();
-        self.wr.reserve(bytes.len());
-        self.wr.put(bytes);
-    }
-
     pub fn poll_flush(&mut self) -> Poll<(), MQTTError> {
         while !self.wr.is_empty() {
-            let n = try_ready!(self.socket.poll_write(&self.wr).map_err(|err| format!("{}", err)));
-            assert!(n > 0);
-            self.wr.advance(n);
+            let write = self.socket.poll_write(&self.wr);
+            let bytes_written = try_ready!(write);
+            assert!(bytes_written > 0);
+            self.wr.advance(bytes_written);
         }
         Ok(Async::Ready(()))
-    }
-
-    fn socket_to_result(packet: Option<Packet>, sock_closed: bool) -> Async<Option<Packet>> {
-        packet.map_or_else(
-            || if sock_closed { Async::Ready(None) } else { Async::NotReady },
-            |packet| Async::Ready(Some(packet)),
-        )
     }
 }
 
@@ -51,11 +55,20 @@ impl Stream for Packets {
     type Error = MQTTError;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        let sock_closed = self.fill_read().map_err(|err| format!("unknown error: {}", err))?.is_ready();
+        let sock_closed = self.fill_read()?.is_ready();
 
         Packet::from(&mut self.rd)
-            .map(|packet| Packets::socket_to_result(packet, sock_closed))
-            .map_err(|err| format!("unknown error: {}", err))
+            .map(|packet| {
+                if packet.is_some() {
+                    Async::Ready(packet)
+                } else if sock_closed {
+                    //socket is closed. should disconnect.
+                    Async::Ready(None)
+                } else {
+                    //waiting for more bytes
+                    Async::NotReady
+                }
+            })
     }
 }
 

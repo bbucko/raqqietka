@@ -30,12 +30,12 @@ impl Future for Client {
 
         self.packets.poll_flush()?;
 
-        while let Async::Ready(Some(packet)) = self.incoming.poll().map_err(|_| "something went wrong with incoming")? {
+        while let Async::Ready(Some(packet)) = self.incoming.poll().unwrap() {
             self.packets.buffer(packet);
         }
 
         let mut broker = self.broker.lock().expect("missing broker");
-        while let Async::Ready(packet) = self.packets.poll().map_err(|_| "something went wrong with packets")? {
+        while let Async::Ready(packet) = self.packets.poll().unwrap() {
             //check for incoming flood of packets?
 
             if let Some(packet) = packet {

@@ -17,7 +17,7 @@ pub fn decode_length(buffer: &mut BytesMut, start: usize) -> Result<Option<(usiz
         let encoded_byte = buffer[index];
         value += (encoded_byte & 127) as usize * multiplier;
         if multiplier > 128 * 128 * 128 {
-            return Err(format!("foo"));
+            return Err(format!("foo").into());
         }
         multiplier *= 128;
 

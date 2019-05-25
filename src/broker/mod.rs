@@ -26,7 +26,7 @@ pub struct Client {
     addr: SocketAddr,
     disconnected: bool,
     packets: Packets,
-    pub incoming: Rx,
+    incoming: Rx,
     broker: Arc<Mutex<Broker>>,
     last_received_packet: SystemTime,
 }
@@ -167,7 +167,7 @@ impl Broker {
         if topic.chars().all(|c| (char::is_alphanumeric(c) || c == '/') && c != '#' && c != '+') {
             return Ok(());
         }
-        Err(format!("invalid_topic_path: {}", topic))
+        Err(format!("invalid_topic_path: {}", topic).into())
     }
 
     fn validate_subscribe(filter: &str) -> Result<(), String> {

@@ -28,12 +28,12 @@ impl TryFrom<Packet> for Connect {
         let (client_id, mut payload) = util::take_string(&payload)?;
 
         if client_id.is_empty() || client_id.len() > 23 {
-            return Err(format!("malformed client_id invalid length: {}", client_id.len()));
+            return Err(format!("malformed client_id invalid length: {}", client_id.len()).into());
         }
 
         if !client_id.chars().all(char::is_alphanumeric) {
             //return 0x02
-            return Err(format!("malformed client_id invalid characters: {}", client_id));
+            return Err(format!("malformed client_id invalid characters: {}", client_id).into());
         }
 
         let will_flag = util::check_flag(flags, 2);
@@ -57,7 +57,7 @@ impl TryFrom<Packet> for Connect {
             })
         } else {
             if will_retain || will_qos != 0 {
-                return Err(format!("malformed will: retain: {}; qos: {}", will_retain, will_qos));
+                return Err(format!("malformed will: retain: {}; qos: {}", will_retain, will_qos).into());
             }
 
             None
