@@ -1,7 +1,6 @@
 use std::fmt;
 use std::fmt::Error;
 use std::fmt::Formatter;
-use std::io;
 
 use bytes::BufMut;
 use bytes::Bytes;
@@ -9,11 +8,12 @@ use bytes::BytesMut;
 use num_traits::FromPrimitive;
 use num_traits::ToPrimitive;
 
-use mqtt::util;
 use mqtt::*;
+use mqtt::util;
+use MQTTError;
 
 impl Packet {
-    pub fn from(buffer: &mut BytesMut) -> Result<Option<Packet>, io::Error> {
+    pub fn from(buffer: &mut BytesMut) -> Result<Option<Packet>, MQTTError> {
         if buffer.is_empty() {
             return Ok(None);
         }
@@ -22,8 +22,8 @@ impl Packet {
         if control_and_flags == 0 {
             return Ok(None);
         }
-
-        let packet_type = PacketType::from_u8(control_and_flags >> 4).expect(format!("unknown packet type: {}", (control_and_flags >> 4)).as_str());
+        let packet_type_byte = control_and_flags >> 4;
+        let packet_type = PacketType::from_u8(packet_type_byte).ok_or(format!("unknown packet type: {}", packet_type_byte))?;
         let flags = control_and_flags & 0b0000_1111;
 
         let (payload_length, header_length) = match util::decode_length(buffer, 1)? {

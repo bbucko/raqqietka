@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
+use futures::{Async, Future, Stream, task};
 use futures::sync::mpsc;
-use futures::{task, Async, Future, Stream};
 
-use broker::{Broker, Client, Puback, Publish, Subscribe};
-use mqtt::{Packet, PacketType, Packets};
+use broker::{Broker, Client, Connect, Puback, Publish, Subscribe};
+use mqtt::{Packet, Packets, PacketType, Tx};
 use MQTTError;
 
 impl Future for Client {
@@ -107,15 +107,17 @@ impl fmt::Display for Client {
 }
 
 impl Client {
-    pub fn new(packet: Packet, broker: Arc<Mutex<Broker>>, packets: Packets) -> Client {
-        let addr = packets.socket.peer_addr().unwrap();
+    pub fn new(packet: Packet, broker: Arc<Mutex<Broker>>, packets: Packets) -> Result<(Client, Tx), MQTTError> {
+        let client_id = packet.try_into()
+            .map(|it: Connect| it.client_id)?
+            .ok_or(format!("missing client_id"))?;
+
+        let addr = packets.socket.peer_addr()
+            .map_err(|e| format!("missing addr: {}", e))?;
+
         let (outgoing, incoming) = mpsc::unbounded();
 
-        let connect = packet.try_into().expect("Malformed connect");
-
-        let client_id = broker.lock().expect("Missing broker").connect(connect, outgoing);
-
-        Client {
+        let client = Client {
             client_id,
             addr,
             packets,
@@ -123,15 +125,13 @@ impl Client {
             broker,
             disconnected: false,
             last_received_packet: SystemTime::now(),
-        }
-    }
+        };
 
-    fn buffer(&mut self, packet: Packet) {
-        self.packets.buffer(packet);
+        Ok((client, outgoing))
     }
 
     pub fn send_connack(&mut self) {
-        self.buffer(Packet::connack());
+        self.packets.buffer(Packet::connack());
     }
 
     fn verify_timeout(&mut self) -> bool {

@@ -1,10 +1,10 @@
-use std::io;
-
 use bytes::BufMut;
 use bytes::Bytes;
 use bytes::BytesMut;
 
-pub fn decode_length(buffer: &mut BytesMut, start: usize) -> Result<Option<(usize, usize)>, io::Error> {
+use MQTTError;
+
+pub fn decode_length(buffer: &mut BytesMut, start: usize) -> Result<Option<(usize, usize)>, MQTTError> {
     let mut multiplier = 1;
     let mut value = 0;
     let mut index = start;
@@ -17,7 +17,7 @@ pub fn decode_length(buffer: &mut BytesMut, start: usize) -> Result<Option<(usiz
         let encoded_byte = buffer[index];
         value += (encoded_byte & 127) as usize * multiplier;
         if multiplier > 128 * 128 * 128 {
-            return Err(io::Error::new(io::ErrorKind::Other, "foo"));
+            return Err(format!("foo"));
         }
         multiplier *= 128;
 

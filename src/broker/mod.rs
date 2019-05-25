@@ -82,11 +82,10 @@ impl Broker {
         }
     }
 
-    pub fn connect(&mut self, connect: Connect, tx: Tx) -> ClientId {
-        let client_id = connect.client_id.unwrap();
+    pub fn register(&mut self, client_id: &ClientId, tx: Tx) -> Result<(), MQTTError> {
         info!("Client: {:?} has connected to broker", &client_id);
         self.clients.insert(client_id.to_owned(), tx);
-        client_id
+        Ok(())
     }
 
     pub fn subscribe(&mut self, client_id: &str, subscribe: Subscribe) -> Result<Vec<u8>, MQTTError> {
@@ -231,8 +230,8 @@ impl std::fmt::Debug for Broker {
 
 #[cfg(test)]
 mod tests {
-    use futures::sync::mpsc;
     use futures::{Future, Stream};
+    use futures::sync::mpsc;
 
     use super::*;
 
@@ -458,7 +457,7 @@ mod tests {
         };
         let (tx, rx) = mpsc::unbounded();
 
-        broker.connect(connect, tx);
+        broker.register(&connect.client_id.unwrap(), tx);
         rx
     }
 }

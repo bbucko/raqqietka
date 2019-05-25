@@ -5,7 +5,7 @@ use tokio::prelude::*;
 use mqtt::Packets;
 use {MQTTError, Packet};
 
-impl Packets {
+ impl Packets {
     pub fn new(socket: TcpStream) -> Packets {
         Packets {
             socket,

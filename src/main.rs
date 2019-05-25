@@ -37,26 +37,35 @@ fn main() -> Result<(), Box<std::error::Error>> {
         .incoming()
         .map_err(|e| error!("Client tried to connect and failed: {:?}", e))
         .map(mqtt::Packets::new)
-        .inspect(|a| info!("New connection: {:?}", a))
+        .inspect(|a| debug!("New connection: {:?}", a))
         .for_each(move |packets| {
             let broker = broker.clone();
 
             let connection = packets
                 .into_future()
-                .map_err(|(e, _)| {
-                    error!("Client failed: {}", e);
-                    format!("packets_error_{}", e)
-                })
+                .map_err(|(e, _)| e.to_string())
                 .and_then(|(connect, packets)| match connect {
                     Some(connect) => {
-                        let mut client = Client::new(connect, broker, packets);
-                        client.send_connack();
-                        Either::A(client)
+                        let inner_broker = broker.clone();
+                        if let Ok((mut client, tx)) = Client::new(connect, broker, packets) {
+                            let client_id = client.client_id.clone();
+
+                            if inner_broker.lock().expect("missing broker").register(&client_id, tx).is_ok() {
+                                client.send_connack();
+                                return Either::A(client);
+                            }
+                        };
+
+                        error!("registration failed");
+                        Either::B(future::ok(()))
                     }
-                    None => Either::B(future::ok(())),
+                    None => {
+                        error!("something went wrong");
+                        Either::B(future::ok(()))
+                    }
                 })
                 .map_err(|e| {
-                    error!("Connection error = {:?}", e);
+                    error!("connection error: {:?}", e);
                 });
 
             tokio::spawn(connection)
