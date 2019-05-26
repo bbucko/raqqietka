@@ -18,13 +18,12 @@ use log::Level;
 use tokio::net::TcpListener;
 use tokio::prelude::*;
 
-use ::MQTTError::OtherError;
 use broker::*;
 use mqtt::*;
+use MQTTError::OtherError;
 
 mod broker;
 mod mqtt;
-
 
 #[derive(Debug)]
 pub enum MQTTError {
@@ -37,7 +36,7 @@ impl Display for MQTTError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         match *self {
             OtherError(ref err) => write!(f, "{}", err),
-            _ => { write!(f, "Error") }
+            _ => write!(f, "Error"),
         }
     }
 }
@@ -45,23 +44,16 @@ impl Display for MQTTError {
 impl error::Error for MQTTError {}
 
 impl std::convert::From<std::sync::PoisonError<std::sync::MutexGuard<'_, broker::Broker>>> for MQTTError {
-    fn from(err: PoisonError<std::sync::MutexGuard<'_, broker::Broker>>) -> Self {
-        MQTTError::ServerError(String::from(err.to_string()))
-    }
+    fn from(err: PoisonError<std::sync::MutexGuard<'_, broker::Broker>>) -> Self { MQTTError::ServerError(err.to_string()) }
 }
 
 impl From<&str> for MQTTError {
-    fn from(str: &str) -> Self {
-        MQTTError::OtherError(String::from(str))
-    }
+    fn from(str: &str) -> Self { MQTTError::OtherError(String::from(str)) }
 }
 
 impl From<String> for MQTTError {
-    fn from(str: String) -> Self {
-        MQTTError::OtherError(str)
-    }
+    fn from(str: String) -> Self { MQTTError::OtherError(str) }
 }
-
 
 fn main() -> Result<(), Box<std::error::Error>> {
     simple_logger::init_with_level(Level::Info).unwrap();

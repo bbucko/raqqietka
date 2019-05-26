@@ -9,8 +9,8 @@ use num_traits::FromPrimitive;
 use num_traits::ToPrimitive;
 
 use broker::{Puback, Publish, Suback};
-use mqtt::*;
 use mqtt::util;
+use mqtt::*;
 use MQTTError;
 
 impl From<Publish> for Packet {
@@ -74,7 +74,7 @@ impl Packet {
             return Ok(None);
         }
         let packet_type_byte = control_and_flags >> 4;
-        let packet_type = PacketType::from_u8(packet_type_byte).ok_or(format!("unknown packet type: {}", packet_type_byte))?;
+        let packet_type = PacketType::from_u8(packet_type_byte).ok_or_else(|| format!("unknown packet type: {}", packet_type_byte))?;
         let flags = control_and_flags & 0b0000_1111;
 
         let (payload_length, header_length) = match util::decode_length(buffer, 1)? {
@@ -129,9 +129,7 @@ impl Packet {
 }
 
 impl fmt::Display for Packet {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload)
-    }
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> { write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload) }
 }
 
 impl Into<Bytes> for Packet {

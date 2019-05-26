@@ -15,6 +15,7 @@ mod client;
 mod packets;
 mod util;
 
+#[derive(Default)]
 pub struct Broker {
     clients: HashMap<ClientId, Tx>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
@@ -82,13 +83,10 @@ pub struct Suback {
 impl Broker {
     pub fn new() -> Self {
         info!("Broker has started");
-        Broker {
-            clients: HashMap::new(),
-            subscriptions: HashMap::new(),
-        }
+        Broker::default()
     }
 
-    pub fn register(&mut self, client_id: &ClientId, tx: Tx) -> Result<(), MQTTError> {
+    pub fn register(&mut self, client_id: &str, tx: Tx) -> Result<(), MQTTError> {
         info!("Client: {:?} has connected to broker", &client_id);
         self.clients.insert(client_id.to_owned(), tx);
         Ok(())

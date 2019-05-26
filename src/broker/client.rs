@@ -29,11 +29,8 @@ impl Future for Client {
         }
 
         //receive messages from broker
-        loop {
-            match self.incoming.poll().unwrap() {
-                Async::Ready(Some(packet)) => self.packets.buffer(packet),
-                _ => break,
-            }
+        while let Async::Ready(Some(packet)) = self.incoming.poll().unwrap() {
+            self.packets.buffer(packet);
         }
 
         self.packets.poll_flush()?;
@@ -106,7 +103,7 @@ impl Future for Client {
 
         //hmm.. yielding?
         task::current().notify();
-        return Ok(Async::NotReady);
+        Ok(Async::NotReady)
     }
 }
 
@@ -114,10 +111,11 @@ impl Drop for Client {
     fn drop(&mut self) {
         let client_id = self.client_id.to_owned();
         info!("Dropped client");
-        match self.broker.lock().map(|mut broker| broker.disconnect(client_id)) {
-            Err(e) => error!("Error while droping client: {}", e),
-            _ => {}
-        };
+
+        match self.broker.lock() {
+            Ok(mut broker) => broker.disconnect(client_id),
+            Err(e) => error!("error locking mutex: {}", e),
+        }
     }
 }
 
@@ -127,7 +125,7 @@ impl fmt::Display for Client {
 
 impl Client {
     pub fn new(packet: Packet, broker: Arc<Mutex<Broker>>, packets: Packets) -> Result<(Client, Tx), MQTTError> {
-        let client_id = packet.try_into().map(|it: Connect| it.client_id)?.ok_or(format!("missing client_id"))?;
+        let client_id = packet.try_into().map(|it: Connect| it.client_id)?.ok_or_else(|| "missing client_id")?;
 
         let addr = packets.socket.peer_addr().map_err(|e| format!("missing addr: {}", e))?;
 
