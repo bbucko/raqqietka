@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-use futures::{Async, Future, Stream, task};
 use futures::sync::mpsc;
+use futures::{task, Async, Future, Stream};
 
-use broker::{Broker, Client, Connect, Puback, Publish, Subscribe};
-use mqtt::{Packet, Packets, PacketType, Tx};
+use broker::{Broker, Client, Connect, Puback, Publish, Suback, Subscribe};
+use mqtt::{Packet, PacketType, Packets, Tx};
 use MQTTError;
 
 impl Future for Client {
@@ -32,7 +32,7 @@ impl Future for Client {
         loop {
             match self.incoming.poll().unwrap() {
                 Async::Ready(Some(packet)) => self.packets.buffer(packet),
-                _ => break
+                _ => break,
             }
         }
 
@@ -50,10 +50,14 @@ impl Future for Client {
                         let subscribe: Subscribe = packet.try_into()?;
                         let packet_id = subscribe.packet_id;
 
-                        let subscription_result = self.broker.lock().map(|mut broker| broker.subscribe(&self.client_id, subscribe)).map_err(MQTTError::from);
+                        let subscription_result = self
+                            .broker
+                            .lock()
+                            .map(|mut broker| broker.subscribe(&self.client_id, subscribe))
+                            .map_err(MQTTError::from);
 
-                        if let Ok(results) = subscription_result? {
-                            let response = Packet::suback(packet_id, &results);
+                        if let Ok(sub_results) = subscription_result? {
+                            let response = Suback { packet_id, sub_results }.into();
                             self.packets.buffer(response);
                         } else {
                             info!("Disconnecting client (malformed or invalid subscribe): {}", self);
@@ -61,17 +65,27 @@ impl Future for Client {
                         }
                     }
                     PacketType::PUBLISH => {
+                        let mut broker = self.broker.lock().map_err(MQTTError::from)?;
+
                         let publish: Publish = packet.try_into()?;
+
+                        broker.validate(&publish)?;
+
                         if publish.qos != 0 {
-                            let response = Packet::puback(publish.packet_id);
+                            let response: Packet = Puback { packet_id: publish.packet_id }.into();
                             self.packets.buffer(response);
+                            self.packets.poll_flush()?;
                         }
-                        self.broker.lock().map_err(MQTTError::from).and_then(|mut broker| broker.publish(publish))?;
+
+                        broker.publish(publish)?;
                     }
                     PacketType::PUBACK => {
                         let puback: Puback = packet.try_into()?;
 
-                        self.broker.lock().map_err(MQTTError::from).and_then(|mut broker| broker.acknowledge(puback.packet_id))?;
+                        self.broker
+                            .lock()
+                            .map_err(MQTTError::from)
+                            .and_then(|mut broker| broker.acknowledge(puback.packet_id))?;
                     }
                     PacketType::PINGREQ => self.packets.buffer(Packet::pingres()),
                     PacketType::CONNECT => {
@@ -108,19 +122,14 @@ impl Drop for Client {
 }
 
 impl fmt::Display for Client {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        write!(f, "Client(clientId: {}, addr: {})", self.client_id, self.addr)
-    }
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> { write!(f, "Client(clientId: {}, addr: {})", self.client_id, self.addr) }
 }
 
 impl Client {
     pub fn new(packet: Packet, broker: Arc<Mutex<Broker>>, packets: Packets) -> Result<(Client, Tx), MQTTError> {
-        let client_id = packet.try_into()
-            .map(|it: Connect| it.client_id)?
-            .ok_or(format!("missing client_id"))?;
+        let client_id = packet.try_into().map(|it: Connect| it.client_id)?.ok_or(format!("missing client_id"))?;
 
-        let addr = packets.socket.peer_addr()
-            .map_err(|e| format!("missing addr: {}", e))?;
+        let addr = packets.socket.peer_addr().map_err(|e| format!("missing addr: {}", e))?;
 
         let (outgoing, incoming) = mpsc::unbounded();
 
@@ -137,9 +146,7 @@ impl Client {
         Ok((client, outgoing))
     }
 
-    pub fn send_connack(&mut self) {
-        self.packets.buffer(Packet::connack());
-    }
+    pub fn send_connack(&mut self) { self.packets.buffer(Packet::connack()); }
 
     fn verify_timeout(&mut self) -> bool {
         SystemTime::now()

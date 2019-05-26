@@ -8,9 +8,60 @@ use bytes::BytesMut;
 use num_traits::FromPrimitive;
 use num_traits::ToPrimitive;
 
+use broker::{Puback, Publish, Suback};
 use mqtt::*;
 use mqtt::util;
 use MQTTError;
+
+impl From<Publish> for Packet {
+    fn from(publish: Publish) -> Self {
+        let payload = publish.payload;
+        let topic = util::encode_string(publish.topic);
+
+        let mut packet = BytesMut::with_capacity(topic.len() + 2 + payload.len());
+        packet.put(topic);
+        packet.put_u16_be(publish.packet_id);
+        packet.put(payload);
+
+        let flags = publish.qos << 1;
+
+        Packet {
+            packet_type: PacketType::PUBLISH,
+            flags,
+            payload: Some(packet.freeze()),
+        }
+    }
+}
+
+impl From<Puback> for Packet {
+    fn from(puback: Puback) -> Self {
+        info!("Responded with PUBACK for packet id: {}", puback.packet_id);
+        let mut payload = BytesMut::with_capacity(2);
+        payload.put_u16_be(puback.packet_id);
+
+        Packet {
+            packet_type: PacketType::PUBACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
+    }
+}
+
+impl From<Suback> for Packet {
+    fn from(suback: Suback) -> Self {
+        let mut payload = BytesMut::with_capacity(2 + suback.sub_results.len());
+        payload.put_u16_be(suback.packet_id);
+        payload.extend(suback.sub_results);
+
+        info!("Responded with SUBACK: {:?}", payload);
+
+        Packet {
+            packet_type: PacketType::SUBACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
+    }
+}
 
 impl Packet {
     pub fn from(buffer: &mut BytesMut) -> Result<Option<Packet>, MQTTError> {
@@ -47,51 +98,8 @@ impl Packet {
         }))
     }
 
-    pub fn publish(packet_identifier: u16, topic: String, payload: Bytes, qos: u8) -> Packet {
-        let mut packet = BytesMut::new();
-        packet.extend(util::encode_string(topic));
-        packet.reserve(2);
-        packet.put_u16_be(packet_identifier);
-        packet.extend(payload);
-
-        assert!(qos < 3);
-        let flags = qos << 1;
-
-        Packet {
-            packet_type: PacketType::PUBLISH,
-            flags,
-            payload: Some(packet.freeze()),
-        }
-    }
-
-    pub fn puback(packet_identifier: u16) -> Packet {
-        info!("Responded with PUBACK for packet id: {}", packet_identifier);
-        let mut payload = BytesMut::new();
-        payload.put_u16_be(packet_identifier);
-
-        Packet {
-            packet_type: PacketType::PUBACK,
-            flags: 0,
-            payload: Some(payload.freeze()),
-        }
-    }
-
-    pub fn suback(packet_identifier: u16, subscription_results: &[u8]) -> Packet {
-        let mut payload = BytesMut::new();
-        payload.put_u16_be(packet_identifier);
-        payload.put(subscription_results);
-
-        info!("Responded with SUBACK: {:?}", payload);
-
-        Packet {
-            packet_type: PacketType::SUBACK,
-            flags: 0,
-            payload: Some(payload.freeze()),
-        }
-    }
-
     pub fn connack() -> Packet {
-        let mut payload = BytesMut::new();
+        let mut payload = BytesMut::with_capacity(2);
         payload.put_u8(0b0000_0000);
         payload.put_u8(0b0000_0000);
 

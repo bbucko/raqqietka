@@ -4,15 +4,12 @@ use bytes::{Bytes, BytesMut};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 
-use {MQTTError, Packet};
 use mqtt::Packets;
+use {MQTTError, Packet};
 
 impl From<io::Error> for MQTTError {
-    fn from(_: io::Error) -> Self {
-        unimplemented!()
-    }
+    fn from(_: io::Error) -> Self { unimplemented!() }
 }
-
 
 impl Packets {
     pub fn new(socket: TcpStream) -> Packets {
@@ -57,18 +54,17 @@ impl Stream for Packets {
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
         let sock_closed = self.fill_read()?.is_ready();
 
-        Packet::from(&mut self.rd)
-            .map(|packet| {
-                if packet.is_some() {
-                    Async::Ready(packet)
-                } else if sock_closed {
-                    //socket is closed. should disconnect.
-                    Async::Ready(None)
-                } else {
-                    //waiting for more bytes
-                    Async::NotReady
-                }
-            })
+        Packet::from(&mut self.rd).map(|packet| {
+            if packet.is_some() {
+                Async::Ready(packet)
+            } else if sock_closed {
+                //socket is closed. should disconnect.
+                Async::Ready(None)
+            } else {
+                //waiting for more bytes
+                Async::NotReady
+            }
+        })
     }
 }
 

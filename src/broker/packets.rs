@@ -13,13 +13,13 @@ impl TryFrom<Packet> for Connect {
     fn try_from(packet: Packet) -> Result<Self, Self::Error> {
         assert_eq!(PacketType::CONNECT, packet.packet_type);
 
-        let payload = packet.payload.ok_or_else(|| "malformed payload")?;
+        let payload = packet.payload.ok_or("malformed payload")?;
 
         let (proto_name, payload) = util::take_string(&payload)?;
-        assert_eq!(proto_name, "MQTT".to_string());
+        assert_eq!(proto_name.as_str(), "MQTT");
 
-        let (version, payload) = payload.split_first().ok_or_else(|| "malformed version")?;
-        let (flags, payload) = payload.split_first().ok_or_else(|| "malformed flags")?;
+        let (version, payload) = payload.split_first().ok_or("malformed version")?;
+        let (flags, payload) = payload.split_first().ok_or("malformed flags")?;
         let flags = *flags;
 
         let clean_session = util::check_flag(flags, 1);
@@ -102,10 +102,9 @@ impl TryFrom<Packet> for Publish {
     type Error = MQTTError;
 
     fn try_from(packet: Packet) -> Result<Self, Self::Error> {
-        //rewrite to try_from
         assert_eq!(PacketType::PUBLISH, packet.packet_type);
 
-        let payload = packet.payload.ok_or_else(|| "malformed")?;
+        let payload = packet.payload.ok_or("malformed")?;
 
         let qos = packet.flags >> 1 & 3;
         let (topic, payload) = util::take_string(&payload)?;
@@ -126,9 +125,11 @@ impl TryFrom<Packet> for Puback {
 
     fn try_from(packet: Packet) -> Result<Self, Self::Error> {
         assert_eq!(PacketType::PUBACK, packet.packet_type);
-        let payload = packet.payload.ok_or_else(|| "malformed")?;
-        let (packet_id,  payload) = util::take_u18(&payload)?;
+        let payload = packet.payload.ok_or("malformed")?;
+        let (packet_id, payload) = util::take_u18(&payload)?;
+
         assert!(payload.is_empty());
+
         Ok(Puback { packet_id })
     }
 }
@@ -140,7 +141,7 @@ impl TryFrom<Packet> for Subscribe {
         //rewrite to try_from
         assert_eq!(PacketType::SUBSCRIBE, packet.packet_type);
 
-        let payload = packet.payload.ok_or_else(|| "malformed")?;
+        let payload = packet.payload.ok_or("malformed")?;
         let (packet_id, mut payload) = util::take_u18(&payload)?;
 
         let mut topics = HashSet::new();
@@ -154,7 +155,7 @@ impl TryFrom<Packet> for Subscribe {
 
             let (topic, topic_payload) = util::take_string(&topic_payload)?;
 
-            let (qos, topic_payload) = topic_payload.split_first().ok_or_else(|| "malformed")?;
+            let (qos, topic_payload) = topic_payload.split_first().ok_or("malformed")?;
 
             topics.insert((topic, *qos));
             payload = topic_payload;

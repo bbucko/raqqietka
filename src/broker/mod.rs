@@ -63,14 +63,20 @@ pub struct Publish {
 }
 
 #[derive(Debug)]
+pub struct Puback {
+    pub packet_id: u16,
+}
+
+#[derive(Debug)]
 pub struct Subscribe {
     pub packet_id: u16,
     pub topics: HashSet<(Topic, u8)>,
 }
 
 #[derive(Debug)]
-pub struct Puback {
+pub struct Suback {
     pub packet_id: u16,
+    pub sub_results: Vec<u8>,
 }
 
 impl Broker {
@@ -106,16 +112,27 @@ impl Broker {
         Ok(result)
     }
 
+    pub fn validate(&self, publish: &Publish) -> Result<(), MQTTError> { Broker::validate_publish(&publish.topic) }
+
     pub fn publish(&mut self, publish: Publish) -> Result<(), MQTTError> {
         let subscriptions = &mut self.subscriptions;
         let clients = &self.clients;
 
-        Broker::validate_publish(&publish.topic)?;
+        let topic = publish.topic.clone();
+        let publish: Packet = publish.into();
 
         for (subscription, client_ips) in subscriptions {
-            if Broker::filter_matches_topic(subscription, &publish.topic) {
-                info!("Number of clients matched: {}", client_ips.len());
-                client_ips.retain(|client| Broker::publish_msg_or_clear(clients, client, &publish))
+            if Broker::filter_matches_topic(subscription, &topic) {
+                client_ips.retain(|client_id| {
+                    if let Some(tx) = clients.get(client_id) {
+                        let packet = publish.clone();
+                        info!("Sending payload on topic {} to client: {}", packet, client_id);
+                        tx.unbounded_send(packet).is_ok()
+                    } else {
+                        info!("Removing disconnected/invalid client: {}", client_id);
+                        false
+                    }
+                })
             }
         }
 
@@ -163,7 +180,7 @@ impl Broker {
         }
     }
 
-    fn validate_publish(topic: &str) -> Result<(), MQTTError> {
+    pub fn validate_publish(topic: &str) -> Result<(), MQTTError> {
         if topic.chars().all(|c| (char::is_alphanumeric(c) || c == '/') && c != '#' && c != '+') {
             return Ok(());
         }
@@ -209,17 +226,6 @@ impl Broker {
         info!("Client: {:?} has disconnected from broker", client_id);
         self.clients.remove(&client_id);
     }
-
-    fn publish_msg_or_clear(clients: &HashMap<ClientId, Tx>, client_id: &ClientId, publish: &Publish) -> bool {
-        if let Some(tx) = clients.get(client_id) {
-            let publish_packet = Packet::publish(publish.packet_id, publish.topic.to_owned(), publish.payload.clone(), publish.qos);
-            info!("Sending payload: {} to client: {}", publish_packet, client_id);
-            tx.unbounded_send(publish_packet).is_ok()
-        } else {
-            info!("Removing disconnected client: {}", client_id);
-            false
-        }
-    }
 }
 
 impl std::fmt::Debug for Broker {
@@ -230,8 +236,8 @@ impl std::fmt::Debug for Broker {
 
 #[cfg(test)]
 mod tests {
-    use futures::{Future, Stream};
     use futures::sync::mpsc;
+    use futures::{Future, Stream};
 
     use super::*;
 
@@ -327,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn test_broker_publish_to_topic_containing_wildcard() {
+    fn test_broker_validate_topic_containing_wildcard() {
         let mut broker = Broker::new();
         let client_id = "client_id";
         register_client(&mut broker, client_id);
@@ -340,7 +346,7 @@ mod tests {
                 qos: 0,
                 payload: Bytes::from("test"),
             };
-            assert!(broker.publish(publish).is_err(), "Publish failed for topic: {}", topic);
+            assert!(broker.validate(&publish).is_err(), "Publish failed for topic: {}", topic);
         }
     }
 

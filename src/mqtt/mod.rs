@@ -13,7 +13,7 @@ pub type Topic = String;
 pub type Tx = mpsc::UnboundedSender<Packet>;
 pub type Rx = mpsc::UnboundedReceiver<Packet>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Packet {
     pub packet_type: PacketType,
     pub flags: u8,
@@ -27,7 +27,7 @@ pub struct Packets {
     wr: BytesMut,
 }
 
-#[derive(Debug, Primitive, PartialEq)]
+#[derive(Debug, Primitive, PartialEq, Clone)]
 pub enum PacketType {
     CONNECT = 1,
     CONNACK = 2,
