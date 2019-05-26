@@ -457,7 +457,8 @@ mod tests {
         };
         let (tx, rx) = mpsc::unbounded();
 
-        broker.register(&connect.client_id.unwrap(), tx);
+        let _ = broker.register(&connect.client_id.unwrap(), tx);
+
         rx
     }
 }

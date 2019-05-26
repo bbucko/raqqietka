@@ -100,7 +100,10 @@ impl Drop for Client {
     fn drop(&mut self) {
         let client_id = self.client_id.to_owned();
         info!("Dropped client");
-        self.broker.lock().unwrap().disconnect(client_id);
+        match self.broker.lock().map(|mut broker| broker.disconnect(client_id)) {
+            Err(e) => error!("Error while droping client: {}", e),
+            _ => {}
+        };
     }
 }
 
