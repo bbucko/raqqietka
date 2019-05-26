@@ -11,7 +11,7 @@ extern crate tokio;
 
 use std::error;
 use std::fmt::{Display, Error, Formatter};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use futures::future::{self, Either};
 use log::Level;
@@ -29,7 +29,7 @@ mod mqtt;
 #[derive(Debug)]
 pub enum MQTTError {
     ClientError,
-    ServerError,
+    ServerError(String),
     OtherError(String),
 }
 
@@ -37,12 +37,18 @@ impl Display for MQTTError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         match *self {
             OtherError(ref err) => write!(f, "{}", err),
-            _ => {write!(f, "Error")}
+            _ => { write!(f, "Error") }
         }
     }
 }
 
 impl error::Error for MQTTError {}
+
+impl std::convert::From<std::sync::PoisonError<std::sync::MutexGuard<'_, broker::Broker>>> for MQTTError {
+    fn from(err: PoisonError<std::sync::MutexGuard<'_, broker::Broker>>) -> Self {
+        MQTTError::ServerError(String::from(err.to_string()))
+    }
+}
 
 impl From<&str> for MQTTError {
     fn from(str: &str) -> Self {

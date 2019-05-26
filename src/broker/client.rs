@@ -28,16 +28,19 @@ impl Future for Client {
             return Ok(Async::Ready(()));
         }
 
-        self.packets.poll_flush()?;
-
-        while let Async::Ready(Some(packet)) = self.incoming.poll().unwrap() {
-            self.packets.buffer(packet);
+        //receive messages from broker
+        loop {
+            match self.incoming.poll().unwrap() {
+                Async::Ready(Some(packet)) => self.packets.buffer(packet),
+                _ => break
+            }
         }
 
-        let mut broker = self.broker.lock().expect("missing broker");
-        while let Async::Ready(packet) = self.packets.poll().unwrap() {
-            //check for incoming flood of packets?
+        self.packets.poll_flush()?;
 
+        //read lines from the broker
+        while let Async::Ready(packet) = self.packets.poll()? {
+            //TODO add flood prevention
             if let Some(packet) = packet {
                 info!("Handling packet: {} by client: {}", packet, self);
                 self.last_received_packet = SystemTime::now();
@@ -47,7 +50,9 @@ impl Future for Client {
                         let subscribe: Subscribe = packet.try_into()?;
                         let packet_id = subscribe.packet_id;
 
-                        if let Ok(results) = broker.subscribe(&self.client_id, subscribe) {
+                        let subscription_result = self.broker.lock().map(|mut broker| broker.subscribe(&self.client_id, subscribe)).map_err(MQTTError::from);
+
+                        if let Ok(results) = subscription_result? {
                             let response = Packet::suback(packet_id, &results);
                             self.packets.buffer(response);
                         } else {
@@ -61,13 +66,12 @@ impl Future for Client {
                             let response = Packet::puback(publish.packet_id);
                             self.packets.buffer(response);
                         }
-
-                        broker.publish(publish)?;
+                        self.broker.lock().map_err(MQTTError::from).and_then(|mut broker| broker.publish(publish))?;
                     }
                     PacketType::PUBACK => {
                         let puback: Puback = packet.try_into()?;
 
-                        broker.acknowledge(puback.packet_id)?;
+                        self.broker.lock().map_err(MQTTError::from).and_then(|mut broker| broker.acknowledge(puback.packet_id))?;
                     }
                     PacketType::PINGREQ => self.packets.buffer(Packet::pingres()),
                     PacketType::CONNECT => {
