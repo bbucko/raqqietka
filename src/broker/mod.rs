@@ -110,7 +110,9 @@ impl Broker {
         Ok(result)
     }
 
-    pub fn validate(&self, publish: &Publish) -> Result<(), MQTTError> { Broker::validate_publish(&publish.topic) }
+    pub fn validate(&self, publish: &Publish) -> Result<(), MQTTError> {
+        Broker::validate_publish(&publish.topic)
+    }
 
     pub fn publish(&mut self, publish: Publish) -> Result<(), MQTTError> {
         let subscriptions = &mut self.subscriptions;

@@ -129,7 +129,9 @@ impl Packet {
 }
 
 impl fmt::Display for Packet {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> { write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload) }
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload)
+    }
 }
 
 impl Into<Bytes> for Packet {

@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 
 use bytes::Bytes;
 
-use broker::{Connect, ConnectAuth, Puback, Publish, Subscribe, util, Will};
+use broker::{util, Connect, ConnectAuth, Puback, Publish, Subscribe, Will};
 use mqtt::{Packet, PacketType};
 use MQTTError;
 

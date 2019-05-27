@@ -44,15 +44,21 @@ impl Display for MQTTError {
 impl error::Error for MQTTError {}
 
 impl std::convert::From<std::sync::PoisonError<std::sync::MutexGuard<'_, broker::Broker>>> for MQTTError {
-    fn from(err: PoisonError<std::sync::MutexGuard<'_, broker::Broker>>) -> Self { MQTTError::ServerError(err.to_string()) }
+    fn from(err: PoisonError<std::sync::MutexGuard<'_, broker::Broker>>) -> Self {
+        MQTTError::ServerError(err.to_string())
+    }
 }
 
 impl From<&str> for MQTTError {
-    fn from(str: &str) -> Self { MQTTError::OtherError(String::from(str)) }
+    fn from(str: &str) -> Self {
+        MQTTError::OtherError(String::from(str))
+    }
 }
 
 impl From<String> for MQTTError {
-    fn from(str: String) -> Self { MQTTError::OtherError(str) }
+    fn from(str: String) -> Self {
+        MQTTError::OtherError(str)
+    }
 }
 
 fn main() -> Result<(), Box<std::error::Error>> {
@@ -67,33 +73,38 @@ fn main() -> Result<(), Box<std::error::Error>> {
     let server = listener
         .incoming()
         .map_err(|e| error!("Client tried to connect and failed: {:?}", e))
-        .map(mqtt::Packets::new)
-        .inspect(|a| debug!("New connection: {:?}", a))
+        .map(mqtt::Packets::from)
         .for_each(move |packets| {
             let broker = broker.clone();
-
             let connection = packets
                 .into_future()
-                .map_err(|(e, _)| e)
-                .and_then(|(connect, packets)| match connect {
-                    Some(connect) => {
-                        let inner_broker = broker.clone();
-                        if let Ok((mut client, tx)) = Client::new(connect, broker, packets) {
-                            let client_id = client.client_id.clone();
+                .map_err(|(e, _)| e) //why this is needed?
+                .and_then(|(connect, packets)| {
+                    let inner_broker = broker.clone();
+                    match connect {
+                        Some(connect) => {
+                            match Client::new(connect, broker, packets) {
+                                Ok((mut client, tx)) => {
+                                    let client_id = client.client_id.clone();
 
-                            if inner_broker.lock().expect("missing broker").register(&client_id, tx).is_ok() {
-                                client.send_connack();
-                                return Either::A(client);
+                                    if inner_broker.lock()
+                                        .map_err(|err| MQTTError::ServerError(err.to_string()))
+                                        .and_then(|mut broker| broker.register(&client_id, tx))
+                                        .is_ok() {
+                                        client.send_connack();
+                                        return Either::A(client);
+                                    }
+                                }
+                                Err(err) => {
+                                    error!("registration failed: {}", err);
+                                }
                             }
-                        };
-
-                        error!("registration failed");
-                        Either::B(future::ok(()))
-                    }
-                    None => {
-                        error!("something went wrong");
-                        Either::B(future::ok(()))
-                    }
+                        }
+                        None => {
+                            error!("missing CONNECT packet");
+                        }
+                    };
+                    Either::B(future::ok(()))
                 })
                 .map_err(|e| {
                     error!("connection error: {:?}", e);

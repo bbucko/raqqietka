@@ -120,7 +120,9 @@ impl Drop for Client {
 }
 
 impl fmt::Display for Client {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> { write!(f, "Client(clientId: {}, addr: {})", self.client_id, self.addr) }
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(f, "Client(clientId: {}, addr: {})", self.client_id, self.addr)
+    }
 }
 
 impl Client {
@@ -144,7 +146,9 @@ impl Client {
         Ok((client, outgoing))
     }
 
-    pub fn send_connack(&mut self) { self.packets.buffer(Packet::connack()); }
+    pub fn send_connack(&mut self) {
+        self.packets.buffer(Packet::connack());
+    }
 
     fn verify_timeout(&mut self) -> bool {
         SystemTime::now()

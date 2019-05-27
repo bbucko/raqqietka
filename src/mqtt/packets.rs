@@ -8,18 +8,22 @@ use mqtt::Packets;
 use {MQTTError, Packet};
 
 impl From<io::Error> for MQTTError {
-    fn from(_: io::Error) -> Self { unimplemented!() }
+    fn from(err: io::Error) -> Self {
+        MQTTError::ServerError(err.to_string())
+    }
 }
 
-impl Packets {
-    pub fn new(socket: TcpStream) -> Packets {
+impl From<TcpStream> for Packets {
+    fn from(socket: TcpStream) -> Self {
         Packets {
             socket,
             rd: BytesMut::new(),
             wr: BytesMut::new(),
         }
     }
+}
 
+impl Packets {
     pub fn buffer(&mut self, packet: Packet) {
         let bytes: Bytes = packet.into();
         self.wr.extend(bytes);
