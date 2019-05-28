@@ -75,6 +75,12 @@ pub struct Subscribe {
 }
 
 #[derive(Debug)]
+pub struct Unsubscribe {
+    pub packet_id: u16,
+    pub topics: HashSet<(Topic, u8)>,
+}
+
+#[derive(Debug)]
 pub struct Suback {
     pub packet_id: u16,
     pub sub_results: Vec<u8>,
@@ -108,6 +114,12 @@ impl Broker {
         }
 
         Ok(result)
+    }
+
+    pub fn unsubscribe(&mut self, _client_id: &str, _unsubscribe: Unsubscribe) -> Result<Vec<u8>, MQTTError> {
+        //        info!("Client: {} has unsubscribed from topic: {} with qos {}", client_id, topic, qos);
+
+        Ok(vec![])
     }
 
     pub fn validate(&self, publish: &Publish) -> Result<(), MQTTError> {

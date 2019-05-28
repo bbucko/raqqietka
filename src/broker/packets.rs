@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 
 use bytes::Bytes;
 
-use broker::{util, Connect, ConnectAuth, Puback, Publish, Subscribe, Will};
+use broker::{util, Connect, ConnectAuth, Puback, Publish, Subscribe, Unsubscribe, Will};
 use mqtt::{Packet, PacketType};
 use MQTTError;
 
@@ -26,15 +26,6 @@ impl TryFrom<Packet> for Connect {
         let (_keep_alive, payload) = util::take_u18(&payload)?;
 
         let (client_id, mut payload) = util::take_string(&payload)?;
-
-        if client_id.is_empty() || client_id.len() > 23 {
-            return Err(format!("malformed client_id invalid length: {}", client_id.len()).into());
-        }
-
-        if !client_id.chars().all(char::is_alphanumeric) {
-            //return 0x02
-            return Err(format!("malformed client_id invalid characters: {}", client_id).into());
-        }
 
         let will_flag = util::check_flag(flags, 2);
         let will_retain = util::check_flag(flags, 5);
@@ -162,6 +153,19 @@ impl TryFrom<Packet> for Subscribe {
         }
 
         Ok(Subscribe { packet_id, topics })
+    }
+}
+
+impl TryFrom<Packet> for Unsubscribe {
+    type Error = MQTTError;
+
+    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
+        //rewrite to try_from
+        assert_eq!(PacketType::UNSUBSCRIBE, packet.packet_type);
+        Ok(Unsubscribe {
+            packet_id: 0,
+            topics: HashSet::new(),
+        })
     }
 }
 

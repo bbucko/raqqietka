@@ -9,9 +9,11 @@ use std::time::SystemTime;
 use futures::sync::mpsc;
 use futures::{task, Async, Future, Stream};
 
-use broker::{Broker, Client, Connect, Puback, Publish, Suback, Subscribe};
+use broker::{Broker, Client, Connect, Puback, Publish, Suback, Subscribe, Unsubscribe};
 use mqtt::{Packet, PacketType, Packets, Tx};
 use MQTTError;
+
+const CLIENT_ID_MAX_LENGTH: u8 = 64;
 
 impl Future for Client {
     type Item = ();
@@ -60,6 +62,14 @@ impl Future for Client {
                             info!("Disconnecting client (malformed or invalid subscribe): {}", self);
                             return Ok(Async::Ready(()));
                         }
+                    }
+                    PacketType::UNSUBSCRIBE => {
+                        let unsubscribe: Unsubscribe = packet.try_into()?;
+                        let _unsub_result = self
+                            .broker
+                            .lock()
+                            .map(|mut broker| broker.unsubscribe(&self.client_id, unsubscribe))
+                            .map_err(MQTTError::from);
                     }
                     PacketType::PUBLISH => {
                         let mut broker = self.broker.lock().map_err(MQTTError::from)?;
@@ -128,6 +138,13 @@ impl fmt::Display for Client {
 impl Client {
     pub fn new(packet: Packet, broker: Arc<Mutex<Broker>>, packets: Packets) -> Result<(Client, Tx), MQTTError> {
         let client_id = packet.try_into().map(|it: Connect| it.client_id)?.ok_or_else(|| "missing client_id")?;
+        if client_id.is_empty() || client_id.len() > usize::from(CLIENT_ID_MAX_LENGTH) {
+            return Err(format!("malformed client_id invalid length: {}", client_id.len()).into());
+        }
+
+        if !client_id.chars().all(char::is_alphanumeric) {
+            return Err(format!("malformed client_id invalid characters: {}", client_id).into());
+        }
 
         let addr = packets.socket.peer_addr().map_err(|e| format!("missing addr: {}", e))?;
 
