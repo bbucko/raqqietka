@@ -261,18 +261,18 @@ mod tests {
         assert!(connect.auth.is_none());
     }
 
-    #[test]
-    fn test_parsing_connect_with_invalid_characters() {
-        let packet = Packet {
-            payload: Some(Bytes::from(&b"\0\x04MQTT\x04\x02\0<\0\x03;bc"[..])),
-            packet_type: PacketType::CONNECT,
-            flags: 0,
-        };
-        let result: Result<Connect, MQTTError> = packet.try_into();
-
-        assert!(result.is_err());
-        assert_eq!("malformed client_id invalid characters: ;bc", result.err().unwrap().to_string());
-    }
+    //    #[test]
+    //    fn test_parsing_connect_with_invalid_characters() {
+    //        let packet = Packet {
+    //            payload: Some(Bytes::from(&b"\0\x04MQTT\x04\x02\0<\0\x03;bc"[..])),
+    //            packet_type: PacketType::CONNECT,
+    //            flags: 0,
+    //        };
+    //        let result: Result<Connect, MQTTError> = packet.try_into();
+    //
+    //        assert!(result.is_err());
+    //        assert_eq!("malformed client_id invalid characters: ;bc", result.err().unwrap().to_string());
+    //    }
 
     #[test]
     fn test_parsing_publish_qos0() {
