@@ -4,8 +4,8 @@ use bytes::{Bytes, BytesMut};
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 
-use mqtt::Packets;
-use {MQTTError, Packet};
+use crate::mqtt::*;
+use crate::MQTTError;
 
 impl From<io::Error> for MQTTError {
     fn from(err: io::Error) -> Self {

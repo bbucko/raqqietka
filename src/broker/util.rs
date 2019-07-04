@@ -1,4 +1,4 @@
-use MQTTError;
+use crate::MQTTError;
 
 pub fn take_u18(bytes: &[u8]) -> Result<(u16, &[u8]), MQTTError> {
     if bytes.len() < 2 {

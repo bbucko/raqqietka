@@ -19,7 +19,6 @@ use tokio::net::TcpListener;
 use tokio::prelude::*;
 
 use broker::*;
-use mqtt::*;
 use MQTTError::OtherError;
 
 mod broker;

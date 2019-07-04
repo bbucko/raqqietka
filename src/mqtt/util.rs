@@ -2,7 +2,7 @@ use bytes::BufMut;
 use bytes::Bytes;
 use bytes::BytesMut;
 
-use MQTTError;
+use crate::MQTTError;
 
 pub fn decode_length(buffer: &mut BytesMut, start: usize) -> Result<Option<(usize, usize)>, MQTTError> {
     let mut multiplier = 1;

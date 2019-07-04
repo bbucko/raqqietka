@@ -3,9 +3,7 @@ use std::convert::TryFrom;
 
 use bytes::Bytes;
 
-use broker::{util, Connect, ConnectAuth, Puback, Publish, Subscribe, Unsubscribe, Will};
-use mqtt::{Packet, PacketType};
-use MQTTError;
+use crate::broker::*;
 
 impl TryFrom<Packet> for Connect {
     type Error = MQTTError;
@@ -172,8 +170,6 @@ impl TryFrom<Packet> for Unsubscribe {
 #[cfg(test)]
 mod tests {
     use std::convert::TryInto;
-
-    use MQTTError;
 
     use super::*;
 
