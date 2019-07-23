@@ -9,7 +9,8 @@ use std::time::SystemTime;
 use futures::sync::mpsc;
 use futures::{task, Async, Future, Stream};
 
-use crate::broker::*;
+use crate::broker::{Broker, Client, Connect, Puback, Publish, Suback, Subscribe, Unsubscribe};
+use crate::mqtt::{Packet, PacketType, Packets, Tx};
 use crate::MQTTError;
 
 const CLIENT_ID_MAX_LENGTH: u8 = 64;
@@ -36,7 +37,7 @@ impl Future for Client {
 
         self.packets.poll_flush()?;
 
-        //read lines from the broker
+        //read lines from the client
         while let Async::Ready(packet) = self.packets.poll()? {
             //TODO add flood prevention
             if let Some(packet) = packet {

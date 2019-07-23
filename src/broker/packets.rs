@@ -4,6 +4,8 @@ use std::convert::TryFrom;
 use bytes::Bytes;
 
 use crate::broker::*;
+use crate::mqtt::{Packet, PacketType};
+use crate::MQTTError;
 
 impl TryFrom<Packet> for Connect {
     type Error = MQTTError;
@@ -127,7 +129,6 @@ impl TryFrom<Packet> for Subscribe {
     type Error = MQTTError;
 
     fn try_from(packet: Packet) -> Result<Self, Self::Error> {
-        //rewrite to try_from
         assert_eq!(PacketType::SUBSCRIBE, packet.packet_type);
 
         let payload = packet.payload.ok_or("malformed")?;
@@ -158,12 +159,27 @@ impl TryFrom<Packet> for Unsubscribe {
     type Error = MQTTError;
 
     fn try_from(packet: Packet) -> Result<Self, Self::Error> {
-        //rewrite to try_from
         assert_eq!(PacketType::UNSUBSCRIBE, packet.packet_type);
-        Ok(Unsubscribe {
-            packet_id: 0,
-            topics: HashSet::new(),
-        })
+
+        let payload = packet.payload.ok_or("malformed")?;
+        let (packet_id, mut payload) = util::take_u18(&payload)?;
+
+        let mut topics = HashSet::new();
+
+        loop {
+            if payload.is_empty() {
+                break;
+            }
+
+            let topic_payload = payload;
+
+            let (topic, topic_payload) = util::take_string(&topic_payload)?;
+
+            topics.insert(topic);
+            payload = topic_payload;
+        }
+
+        Ok(Unsubscribe { packet_id, topics })
     }
 }
 
@@ -256,19 +272,6 @@ mod tests {
 
         assert!(connect.auth.is_none());
     }
-
-    //    #[test]
-    //    fn test_parsing_connect_with_invalid_characters() {
-    //        let packet = Packet {
-    //            payload: Some(Bytes::from(&b"\0\x04MQTT\x04\x02\0<\0\x03;bc"[..])),
-    //            packet_type: PacketType::CONNECT,
-    //            flags: 0,
-    //        };
-    //        let result: Result<Connect, MQTTError> = packet.try_into();
-    //
-    //        assert!(result.is_err());
-    //        assert_eq!("malformed client_id invalid characters: ;bc", result.err().unwrap().to_string());
-    //    }
 
     #[test]
     fn test_parsing_publish_qos0() {

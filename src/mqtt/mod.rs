@@ -7,9 +7,6 @@ mod packet;
 mod packets;
 mod util;
 
-pub type ClientId = String;
-pub type Topic = String;
-
 pub type Tx = mpsc::UnboundedSender<Packet>;
 pub type Rx = mpsc::UnboundedReceiver<Packet>;
 

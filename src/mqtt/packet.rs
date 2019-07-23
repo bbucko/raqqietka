@@ -14,6 +14,8 @@ use crate::MQTTError;
 
 impl From<Publish> for Packet {
     fn from(publish: Publish) -> Self {
+        info!("Sending PUBLISH for packet id: {}", publish.packet_id);
+
         let payload = publish.payload;
         let topic = util::encode_string(publish.topic);
 
@@ -35,6 +37,7 @@ impl From<Publish> for Packet {
 impl From<Puback> for Packet {
     fn from(puback: Puback) -> Self {
         info!("Responded with PUBACK for packet id: {}", puback.packet_id);
+
         let mut payload = BytesMut::with_capacity(2);
         payload.put_u16_be(puback.packet_id);
 
@@ -56,6 +59,21 @@ impl From<Suback> for Packet {
 
         Packet {
             packet_type: PacketType::SUBACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
+    }
+}
+
+impl From<Unsuback> for Packet {
+    fn from(unsuback: Unsuback) -> Self {
+        let mut payload = BytesMut::with_capacity(2);
+        payload.put_u16_be(unsuback.packet_id);
+
+        info!("Responded with UNSUBACK: {:?}", payload);
+
+        Packet {
+            packet_type: PacketType::UNSUBACK,
             flags: 0,
             payload: Some(payload.freeze()),
         }
