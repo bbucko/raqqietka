@@ -56,7 +56,7 @@ client.on_connect = on_connect
 client.on_disconnect = on_disconnect
 client.on_publish = on_publish
 client.on_subscribe = on_subscribe
-# client.on_log = on_log
+client.on_log = on_log
 client.on_message = on_message
 client.username_pw_set("username", "password")
 client.will_set("/will/topic", "will message", 0)
