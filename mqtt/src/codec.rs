@@ -58,7 +58,7 @@ impl Encoder for PacketsCodec {
         let bytes: Bytes = item.into();
         dst.reserve(bytes.len());
         dst.put(bytes);
-        return Ok(());
+        Ok(())
     }
 }
 

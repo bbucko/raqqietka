@@ -55,6 +55,7 @@ async fn process(broker: Arc<Mutex<Broker>>, stream: TcpStream, addr: SocketAddr
     let (client, client_id) = Client::new(broker.clone(), connect, packets).await?;
 
     client.poll().await?;
+
     info!("Disconnecting...");
 
     {

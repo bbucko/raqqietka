@@ -7,4 +7,11 @@ edition = "2018"
 [dependencies]
 log = "0.4"
 bytes = "0.4"
+
+tokio = "0.2.0-alpha"
+tokio-sync = "0.2.0-alpha"
+
+futures-preview = "0.3.0-alpha"
+futures-util-preview = "0.3.0-alpha"
+
 packets = {path = "../packets"}

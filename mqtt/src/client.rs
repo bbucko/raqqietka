@@ -2,35 +2,34 @@ use std::convert::TryInto;
 use std::fmt;
 use std::fmt::Formatter;
 use std::pin::Pin;
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::task::Context;
 use std::time::SystemTime;
 
 use futures::{Poll, SinkExt, Stream, StreamExt};
 use tokio::codec::Framed;
-use tokio::io;
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 use broker::{Broker, ClientId};
-use packets::{ConnAck, Connect, MQTTError, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
+use packets::{ConnAck, Connect, MQTTError, MQTTResult, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
 
 use crate::{Client, Message, PacketsCodec};
 
 pub type FramedPackets = Framed<TcpStream, PacketsCodec>;
 
 impl Client {
-    pub async fn new(broker: Arc<Mutex<Broker>>, connect: Connect, mut packets: FramedPackets) -> io::Result<(Self, ClientId)> {
-        let (outgoing, incoming) = mpsc::channel();
+    pub async fn new(broker: Arc<Mutex<Broker>>, connect: Connect, mut packets: FramedPackets) -> MQTTResult<(Self, ClientId)> {
+        let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError(format!("missing clientId")))?;
 
-        let client_id = connect.client_id.unwrap();
+        //Create channels
+        let (outgoing, incoming) = mpsc::unbounded_channel();
 
         //Register client in the broker
         broker.lock().await.register(client_id.clone().as_str(), outgoing)?;
 
         //Respond with CONNACK
-        let conn_ack: Packet = ConnAck::default().into();
-        packets.send(conn_ack).await?;
+        packets.send(ConnAck::default().into()).await?;
 
         let client = Client {
             client_id: client_id.clone(),
@@ -45,7 +44,7 @@ impl Client {
         Ok((client, client_id))
     }
 
-    pub async fn poll(mut self: Client) -> io::Result<()> {
+    pub async fn poll(mut self: Client) -> MQTTResult<()> {
         while let Some(result) = self.next().await {
             match result {
                 Ok(Message::Received(packet)) => {
@@ -74,15 +73,16 @@ impl Client {
 
                             let mut broker = self.broker.lock().await;
                             broker.validate(&publish)?;
-                            broker.publish(publish)?;
 
                             if qos == 1 {
                                 let response: Packet = PubAck { packet_id }.into();
                                 self.packets.send(response).await?;
                             } else if qos == 2 {
-                                //                                let response: Packet = PubAck { packet_id: publish.packet_id }.into();
-                                //                                self.packets.send(response).await?;
+                                //let response: Packet = PubAck { packet_id: publish.packet_id }.into();
+                                //self.packets.send(response).await?;
                             }
+
+                            broker.publish(publish)?;
                         }
                         PacketType::PUBACK => {
                             let puback: PubAck = packet.try_into()?;
@@ -112,6 +112,7 @@ impl Client {
                 }
                 Err(e) => {
                     error!("an error occurred while processing messages for {}; error = {:?}", self.client_id, e);
+                    return Err(MQTTError::OtherError(e.to_string()));
                 }
             }
         }
@@ -123,14 +124,9 @@ impl Stream for Client {
     type Item = Result<Message, MQTTError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let incoming = self.incoming.try_recv();
-        if incoming.is_ok() {
-            return Poll::Ready(Some(Ok(Message::Broadcast(incoming.unwrap().into()))));
+        if let Poll::Ready(Some(v)) = self.incoming.poll_next_unpin(cx) {
+            return Poll::Ready(Some(Ok(Message::Broadcast(v.into()))));
         }
-
-        //        if let Poll::Ready(Some(v)) = self.incoming.poll_next_unpin(cx) {
-        //            return Poll::Ready(Some(Ok(Message::Broadcast(v.into()))));
-        //        }
 
         let result: Option<_> = futures::ready!(self.packets.poll_next_unpin(cx));
 

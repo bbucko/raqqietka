@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::fmt;
 use std::fmt::Formatter;
+use std::result;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use num_traits::ToPrimitive;
@@ -20,9 +21,11 @@ pub type ClientId = String;
 pub type PacketId = u128;
 pub type Topic = String;
 
+pub type MQTTResult<T> = result::Result<T, MQTTError>;
+
 #[derive(Debug)]
 pub enum MQTTError {
-    ClientError,
+    ClientError(String),
     ServerError(String),
     OtherError(String),
 }
@@ -77,6 +80,9 @@ pub struct Will {
     message: Bytes,
 }
 
+#[derive(Debug, Default)]
+pub struct ConnAck {}
+
 #[derive(Debug)]
 pub struct Subscribe {
     pub packet_id: u16,
@@ -84,9 +90,20 @@ pub struct Subscribe {
 }
 
 #[derive(Debug)]
+pub struct SubAck {
+    pub packet_id: u16,
+    pub sub_results: Vec<u8>,
+}
+
+#[derive(Debug)]
 pub struct Unsubscribe {
     pub packet_id: u16,
     pub topics: HashSet<Topic>,
+}
+
+#[derive(Debug)]
+pub struct UnsubAck {
+    pub packet_id: u16,
 }
 
 #[derive(Debug)]
@@ -97,111 +114,42 @@ pub struct Publish {
     pub payload: Bytes,
 }
 
-#[derive(Debug, Default)]
-pub struct ConnAck {}
-
 #[derive(Debug)]
 pub struct PubAck {
-    pub packet_id: u16,
-}
-
-#[derive(Debug)]
-pub struct SubAck {
-    pub packet_id: u16,
-    pub sub_results: Vec<u8>,
-}
-
-#[derive(Debug)]
-pub struct UnsubAck {
     pub packet_id: u16,
 }
 
 #[derive(Debug, Default)]
 pub struct PingResp {}
 
-impl From<PubAck> for Packet {
-    fn from(puback: PubAck) -> Self {
-        info!("Responded with PUBACK for packet id: {}", puback.packet_id);
-
-        let mut payload = BytesMut::with_capacity(2);
-        payload.put_u16_be(puback.packet_id);
-
-        Packet {
-            packet_type: PacketType::PUBACK,
-            flags: 0,
-            payload: Some(payload.freeze()),
-        }
+impl Packet {
+    fn type_and_flags(packet_type: &PacketType, flags: u8) -> u8 {
+        assert!(flags <= 0b0000_1111);
+        packet_type.to_u8().map(|packet_type| (packet_type << 4) + flags).unwrap()
     }
 }
 
-impl From<SubAck> for Packet {
-    fn from(suback: SubAck) -> Self {
-        let mut payload = BytesMut::with_capacity(2 + suback.sub_results.len());
-        payload.put_u16_be(suback.packet_id);
-        payload.extend(suback.sub_results);
+impl Into<Bytes> for Packet {
+    fn into(self) -> Bytes {
+        let packet_type = &self.packet_type;
+        let flags = self.flags;
 
-        info!("Responded with SUBACK: {:?}", payload);
+        let payload = self.payload.map_or_else(Bytes::new, Bytes::into);
+        let packet_length = payload.len();
 
-        Packet {
-            packet_type: PacketType::SUBACK,
-            flags: 0,
-            payload: Some(payload.freeze()),
-        }
+        let encoded_packet_length = util::encode_length(packet_length);
+
+        let mut bytes = BytesMut::with_capacity(1 + encoded_packet_length.len() + packet_length);
+        bytes.put_u8(Packet::type_and_flags(packet_type, flags));
+        bytes.put(encoded_packet_length);
+        bytes.put(payload);
+        bytes.freeze()
     }
 }
 
-impl From<UnsubAck> for Packet {
-    fn from(unsuback: UnsubAck) -> Self {
-        let mut payload = BytesMut::with_capacity(2);
-        payload.put_u16_be(unsuback.packet_id);
-
-        info!("Responded with UNSUBACK: {:?}", payload);
-
-        Packet {
-            packet_type: PacketType::UNSUBACK,
-            flags: 0,
-            payload: Some(payload.freeze()),
-        }
-    }
-}
-
-impl From<ConnAck> for Packet {
-    fn from(_: ConnAck) -> Self {
-        let mut payload = BytesMut::with_capacity(2);
-        payload.put_u8(0b0000_0000);
-        payload.put_u8(0b0000_0000);
-
-        info!("Responded with CONNACK");
-
-        Packet {
-            packet_type: PacketType::CONNACK,
-            flags: 0,
-            payload: Some(payload.freeze()),
-        }
-    }
-}
-
-impl From<PingResp> for Packet {
-    fn from(_: PingResp) -> Self {
-        Packet {
-            packet_type: PacketType::PINGRES,
-            flags: 0,
-            payload: None,
-        }
-    }
-}
-
-impl TryFrom<Packet> for PubAck {
-    type Error = MQTTError;
-
-    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
-        assert_eq!(PacketType::PUBACK, packet.packet_type);
-        let payload = packet.payload.ok_or("malformed")?;
-        let (packet_id, payload) = util::take_u18(&payload)?;
-
-        assert!(payload.is_empty());
-
-        Ok(PubAck { packet_id })
+impl fmt::Display for Packet {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload)
     }
 }
 
@@ -216,9 +164,8 @@ impl TryFrom<Packet> for Connect {
         let (proto_name, payload) = util::take_string(&payload)?;
         assert_eq!(proto_name.as_str(), "MQTT");
 
-        let (version, payload) = payload.split_first().ok_or("malformed version")?;
-        let (flags, payload) = payload.split_first().ok_or("malformed flags")?;
-        let flags = *flags;
+        let (&version, payload) = payload.split_first().ok_or("malformed version")?;
+        let (&flags, payload) = payload.split_first().ok_or("malformed flags")?;
 
         let clean_session = util::check_flag(flags, 1);
         let (_keep_alive, payload) = util::take_u18(&payload)?;
@@ -278,7 +225,7 @@ impl TryFrom<Packet> for Connect {
         assert!(payload.is_empty());
 
         Ok(Connect {
-            version: *version,
+            version: version,
             client_id: Some(client_id),
             auth,
             will,
@@ -287,26 +234,19 @@ impl TryFrom<Packet> for Connect {
     }
 }
 
-impl TryFrom<Packet> for Publish {
-    type Error = MQTTError;
+impl From<ConnAck> for Packet {
+    fn from(_: ConnAck) -> Self {
+        let mut payload = BytesMut::with_capacity(2);
+        payload.put_u8(0b0000_0000);
+        payload.put_u8(0b0000_0000);
 
-    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
-        assert_eq!(PacketType::PUBLISH, packet.packet_type);
+        info!("Responded with CONNACK");
 
-        let payload = packet.payload.ok_or("malformed")?;
-
-        let qos = packet.flags >> 1 & 3;
-        let (topic, payload) = util::take_string(&payload)?;
-
-        let (packet_id, payload) = if qos == 0 { (0, payload) } else { util::take_u18(&payload)? };
-        let payload = Bytes::from(payload);
-
-        Ok(Publish {
-            packet_id,
-            topic,
-            qos,
-            payload,
-        })
+        Packet {
+            packet_type: PacketType::CONNACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
     }
 }
 
@@ -330,13 +270,29 @@ impl TryFrom<Packet> for Subscribe {
 
             let (topic, topic_payload) = util::take_string(&topic_payload)?;
 
-            let (qos, topic_payload) = topic_payload.split_first().ok_or("malformed")?;
+            let (&qos, topic_payload) = topic_payload.split_first().ok_or("malformed")?;
 
-            topics.insert((topic, *qos));
+            topics.insert((topic, qos));
             payload = topic_payload;
         }
 
         Ok(Subscribe { packet_id, topics })
+    }
+}
+
+impl From<SubAck> for Packet {
+    fn from(suback: SubAck) -> Self {
+        let mut payload = BytesMut::with_capacity(2 + suback.sub_results.len());
+        payload.put_u16_be(suback.packet_id);
+        payload.extend(suback.sub_results);
+
+        info!("Responded with SUBACK: {:?}", payload);
+
+        Packet {
+            packet_type: PacketType::SUBACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
     }
 }
 
@@ -368,6 +324,21 @@ impl TryFrom<Packet> for Unsubscribe {
     }
 }
 
+impl From<UnsubAck> for Packet {
+    fn from(unsuback: UnsubAck) -> Self {
+        let mut payload = BytesMut::with_capacity(2);
+        payload.put_u16_be(unsuback.packet_id);
+
+        info!("Responded with UNSUBACK: {:?}", payload);
+
+        Packet {
+            packet_type: PacketType::UNSUBACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
+    }
+}
+
 impl From<Publish> for Packet {
     fn from(publish: Publish) -> Self {
         info!("Sending PUBLISH for packet id: {}", publish.packet_id);
@@ -390,34 +361,65 @@ impl From<Publish> for Packet {
     }
 }
 
-impl Into<Bytes> for Packet {
-    fn into(self) -> Bytes {
-        let packet_type = &self.packet_type;
-        let flags = self.flags;
+impl From<PubAck> for Packet {
+    fn from(puback: PubAck) -> Self {
+        info!("Responded with PUBACK for packet id: {}", puback.packet_id);
 
-        let payload = self.payload.map_or_else(Bytes::new, Bytes::into);
-        let packet_length = payload.len();
+        let mut payload = BytesMut::with_capacity(2);
+        payload.put_u16_be(puback.packet_id);
 
-        let encoded_packet_length = util::encode_length(packet_length);
-
-        let mut bytes = BytesMut::with_capacity(1 + encoded_packet_length.len() + packet_length);
-        bytes.put_u8(Packet::type_and_flags(packet_type, flags));
-        bytes.put(encoded_packet_length);
-        bytes.put(payload);
-        bytes.freeze()
+        Packet {
+            packet_type: PacketType::PUBACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
     }
 }
 
-impl Packet {
-    fn type_and_flags(packet_type: &PacketType, flags: u8) -> u8 {
-        assert!(flags <= 0b0000_1111);
-        packet_type.to_u8().map(|packet_type| (packet_type << 4) + flags).unwrap()
+impl TryFrom<Packet> for PubAck {
+    type Error = MQTTError;
+
+    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
+        assert_eq!(PacketType::PUBACK, packet.packet_type);
+        let payload = packet.payload.ok_or("malformed")?;
+        let (packet_id, payload) = util::take_u18(&payload)?;
+
+        assert!(payload.is_empty());
+
+        Ok(PubAck { packet_id })
     }
 }
 
-impl fmt::Display for Packet {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload)
+impl TryFrom<Packet> for Publish {
+    type Error = MQTTError;
+
+    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
+        assert_eq!(PacketType::PUBLISH, packet.packet_type);
+
+        let payload = packet.payload.ok_or("malformed")?;
+
+        let qos = packet.flags >> 1 & 3;
+        let (topic, payload) = util::take_string(&payload)?;
+
+        let (packet_id, payload) = if qos == 0 { (0, payload) } else { util::take_u18(&payload)? };
+        let payload = Bytes::from(payload);
+
+        Ok(Publish {
+            packet_id,
+            topic,
+            qos,
+            payload,
+        })
+    }
+}
+
+impl From<PingResp> for Packet {
+    fn from(_: PingResp) -> Self {
+        Packet {
+            packet_type: PacketType::PINGRES,
+            flags: 0,
+            payload: None,
+        }
     }
 }
 
