@@ -3,9 +3,7 @@ use std::convert::TryFrom;
 
 use bytes::Bytes;
 
-use crate::broker::*;
-use crate::mqtt::{Packet, PacketType};
-use crate::MQTTError;
+use crate::{util, Connect, ConnectAuth, MQTTError, Packet, PacketType, Publish, Subscribe, Unsubscribe, Will};
 
 impl TryFrom<Packet> for Connect {
     type Error = MQTTError;
@@ -101,27 +99,14 @@ impl TryFrom<Packet> for Publish {
         let (topic, payload) = util::take_string(&payload)?;
 
         let (packet_id, payload) = if qos == 0 { (0, payload) } else { util::take_u18(&payload)? };
+        let payload = Bytes::from(payload);
 
         Ok(Publish {
             packet_id,
             topic,
             qos,
-            payload: Bytes::from(payload),
+            payload,
         })
-    }
-}
-
-impl TryFrom<Packet> for Puback {
-    type Error = MQTTError;
-
-    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
-        assert_eq!(PacketType::PUBACK, packet.packet_type);
-        let payload = packet.payload.ok_or("malformed")?;
-        let (packet_id, payload) = util::take_u18(&payload)?;
-
-        assert!(payload.is_empty());
-
-        Ok(Puback { packet_id })
     }
 }
 
