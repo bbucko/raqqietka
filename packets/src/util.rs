@@ -48,7 +48,9 @@ pub fn take_string(bytes: &[u8]) -> Result<(String, &[u8]), MQTTError> {
     Ok((string, bytes))
 }
 
-pub fn check_flag(flags: u8, position: usize) -> bool { (flags >> position) & 1u8 == 1u8 }
+pub fn check_flag(flags: u8, position: usize) -> bool {
+    (flags >> position) & 1u8 == 1u8
+}
 
 #[cfg(test)]
 mod tests {
@@ -80,7 +82,9 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn test_calculate_length_short() { take_u18(&[0u8]).unwrap(); }
+    fn test_calculate_length_short() {
+        take_u18(&[0u8]).unwrap();
+    }
 
     #[test]
     fn test_calculate_length() {

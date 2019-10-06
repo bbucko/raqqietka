@@ -8,7 +8,6 @@ extern crate log;
 use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::fmt;
-use std::fmt::Error;
 use std::fmt::Formatter;
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -74,7 +73,7 @@ pub struct ConnectAuth {
 pub struct Will {
     qos: u8,
     retain: bool,
-    topic: String,
+    topic: Topic,
     message: Bytes,
 }
 
@@ -417,7 +416,9 @@ impl Packet {
 }
 
 impl fmt::Display for Packet {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> { write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload) }
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload)
+    }
 }
 
 #[cfg(test)]

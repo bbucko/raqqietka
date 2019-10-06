@@ -7,7 +7,9 @@ use crate::num_traits::FromPrimitive;
 use crate::PacketsCodec;
 
 impl PacketsCodec {
-    pub fn new() -> PacketsCodec { PacketsCodec::default() }
+    pub fn new() -> PacketsCodec {
+        PacketsCodec::default()
+    }
 }
 
 impl Decoder for PacketsCodec {

@@ -2,8 +2,9 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fmt::Formatter;
 
+use packets::{MQTTError, Publish, Subscribe, Unsubscribe};
+
 use crate::{Broker, ClientId, Packet, Tx};
-use packets::{MQTTError, Subscribe, Unsubscribe, Publish};
 
 impl Broker {
     pub fn new() -> Self {
@@ -49,7 +50,9 @@ impl Broker {
         Ok(())
     }
 
-    pub fn validate(&self, publish: &Publish) -> Result<(), MQTTError> { Broker::validate_publish(&publish.topic) }
+    pub fn validate(&self, publish: &Publish) -> Result<(), MQTTError> {
+        Broker::validate_publish(&publish.topic)
+    }
 
     pub fn publish(&mut self, publish: Publish) -> Result<(), MQTTError> {
         let subscriptions = &mut self.subscriptions;
@@ -65,7 +68,7 @@ impl Broker {
                         let packet = publish.clone();
                         info!("Sending payload on topic {} to client: {}", packet, client_id);
 
-                        tx.try_send(packet).is_ok()
+                        tx.send(packet).is_ok()
                     } else {
                         info!("Removing disconnected/invalid client: {}", client_id);
 
@@ -169,19 +172,22 @@ impl Broker {
 }
 
 impl std::fmt::Debug for Broker {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result { write!(f, "Broker(clients#: {}, subscriptions#: {})", self.clients.len(), self.subscriptions.len()) }
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Broker(clients#: {}, subscriptions#: {})", self.clients.len(), self.subscriptions.len())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+
     use bytes::Bytes;
-    use futures_util::StreamExt;
-    use tokio::sync::mpsc;
+
+    use packets::{Connect, Publish, Subscribe};
 
     use crate::Rx;
 
     use super::*;
-    use packets::{Subscribe, Publish, Connect};
 
     #[test]
     fn test_broker_connect() {
@@ -297,7 +303,7 @@ mod tests {
     fn test_broker_publish_with_plain_subscription() {
         let mut broker = Broker::new();
         let client_id = "client_id";
-        let mut rx = register_client(&mut broker, client_id);
+        let rx = register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic", "/second/topic", "/third/topic"]);
 
         for topic in vec!["/topic", "/second/topic", "/third/topic"] {
@@ -310,21 +316,17 @@ mod tests {
             assert!(broker.publish(publish).is_ok(), "Publish failed for topic: {}", topic);
         }
 
-        rx.close();
-        futures::executor::block_on(async {
-            let packets: Vec<Packet> = rx.collect().await;
-            assert_eq!(packets.len(), 3);
-            assert_eq!(packets[0].payload, Some(Bytes::from("\0\x06/topic\0\x01test")));
-            assert_eq!(packets[1].payload, Some(Bytes::from("\0\r/second/topic\0\x01test")));
-            assert_eq!(packets[2].payload, Some(Bytes::from("\0\x0c/third/topic\0\x01test")));
-        });
+        assert_eq!(next_packet(&rx).payload, Some(Bytes::from("\0\x06/topic\0\x01test")));
+        assert_eq!(next_packet(&rx).payload, Some(Bytes::from("\0\r/second/topic\0\x01test")));
+        assert_eq!(next_packet(&rx).payload, Some(Bytes::from("\0\x0c/third/topic\0\x01test")));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
     fn test_broker_publish_with_wildcard_one_level_subscription() {
         let mut broker = Broker::new();
         let client_id = "client_id";
-        let mut rx = register_client(&mut broker, client_id);
+        let rx = register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic/+"]);
 
         for topic in vec!["/topic/oneLevel", "/topic/two/levels", "/topic/level/first", "/different/topic"] {
@@ -337,19 +339,15 @@ mod tests {
             assert!(broker.publish(publish).is_ok(), "Publish failed for topic: {}", topic);
         }
 
-        rx.close();
-        futures::executor::block_on(async {
-            let packets: Vec<Packet> = rx.collect().await;
-            assert_eq!(packets.len(), 1);
-            assert_eq!(packets[0].payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
-        });
+        assert_eq!(next_packet(&rx).payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
     fn test_broker_publish_with_wildcard_one_level_in_the_middle_subscription() {
         let mut broker = Broker::new();
         let client_id = "client_id";
-        let mut rx = register_client(&mut broker, client_id);
+        let rx = register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic/+/first"]);
 
         for topic in vec!["/topic/oneLevel", "/topic/two/levels", "/topic/oneLevel/first", "/different/topic"] {
@@ -362,19 +360,15 @@ mod tests {
             assert!(broker.publish(publish).is_ok(), "Publish failed for topic: {}", topic);
         }
 
-        rx.close();
-        futures::executor::block_on(async {
-            let packets: Vec<Packet> = rx.collect().await;
-            assert_eq!(packets.len(), 1);
-            assert_eq!(packets[0].payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x01test")));
-        });
+        assert_eq!(next_packet(&rx).payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x01test")));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
     fn test_broker_publish_with_wildcard_multilevel_at_the_end_subscription() {
         let mut broker = Broker::new();
         let client_id = "client_id";
-        let mut rx = register_client(&mut broker, client_id);
+        let rx = register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic/#"]);
 
         for topic in vec!["/topic/oneLevel", "/topic/two/levels", "/topic/oneLevel/first", "/different/topic"] {
@@ -387,14 +381,14 @@ mod tests {
             assert!(broker.publish(publish).is_ok(), "Publish failed for topic: {}", topic);
         }
 
-        rx.close();
-        futures::executor::block_on(async {
-            let packets: Vec<Packet> = rx.collect().await;
-            assert_eq!(packets.len(), 3);
-            assert_eq!(packets[0].payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
-            assert_eq!(packets[1].payload, Some(Bytes::from("\0\x11/topic/two/levels\0\x01test")));
-            assert_eq!(packets[1].payload, Some(Bytes::from("\0\x11/topic/two/levels\0\x01test")));
-        });
+        assert_eq!(next_packet(&rx).payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
+        assert_eq!(next_packet(&rx).payload, Some(Bytes::from("\0\x11/topic/two/levels\0\x01test")));
+        assert_eq!(next_packet(&rx).payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x01test")));
+        assert!(rx.try_recv().is_err());
+    }
+
+    fn next_packet(rx: &Rx) -> Packet {
+        rx.recv().unwrap()
     }
 
     fn subscribe_client(broker: &mut Broker, client_id: &str, topics: &[&str]) {
@@ -412,7 +406,7 @@ mod tests {
             will: None,
             clean_session: false,
         };
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel();
 
         let _ = broker.register(&connect.client_id.unwrap(), tx);
 

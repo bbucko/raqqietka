@@ -6,10 +6,6 @@ edition = "2018"
 
 [dependencies]
 log = "0.4"
-simple_logger = "1.0"
 bytes = "0.4"
 num-traits = "^0.1"
 enum-primitive-derive = "0.1"
-
-
-[lib]

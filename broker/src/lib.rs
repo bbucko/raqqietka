@@ -6,9 +6,9 @@ extern crate log;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::sync::mpsc;
 
 use bytes::Bytes;
-use tokio::sync::mpsc;
 
 use packets::Packet;
 
@@ -18,8 +18,8 @@ pub type ClientId = String;
 pub type PacketId = u128;
 pub type Topic = String;
 
-pub type Tx = mpsc::UnboundedSender<Packet>;
-pub type Rx = mpsc::UnboundedReceiver<Packet>;
+pub type Tx = mpsc::Sender<Packet>;
+pub type Rx = mpsc::Receiver<Packet>;
 
 #[derive(Default)]
 pub struct Broker {
@@ -37,11 +37,17 @@ pub struct ApplicationMessage {
 }
 
 impl Hash for ApplicationMessage {
-    fn hash<H: Hasher>(&self, state: &mut H) { self.id.hash(state); }
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
 }
 
 impl PartialEq for ApplicationMessage {
-    fn eq(&self, other: &Self) -> bool { self.id == other.id }
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
 
-    fn ne(&self, other: &Self) -> bool { self.id != other.id }
+    fn ne(&self, other: &Self) -> bool {
+        self.id != other.id
+    }
 }

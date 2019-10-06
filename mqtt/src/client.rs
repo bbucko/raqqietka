@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::fmt;
 use std::fmt::Formatter;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::task::Context;
 use std::time::SystemTime;
 
@@ -10,7 +10,7 @@ use futures::{Poll, SinkExt, Stream, StreamExt};
 use tokio::codec::Framed;
 use tokio::io;
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 
 use broker::{Broker, ClientId};
 use packets::{ConnAck, Connect, MQTTError, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
@@ -21,7 +21,7 @@ pub type FramedPackets = Framed<TcpStream, PacketsCodec>;
 
 impl Client {
     pub async fn new(broker: Arc<Mutex<Broker>>, connect: Connect, mut packets: FramedPackets) -> io::Result<(Self, ClientId)> {
-        let (outgoing, incoming) = mpsc::unbounded_channel();
+        let (outgoing, incoming) = mpsc::channel();
 
         let client_id = connect.client_id.unwrap();
 
@@ -80,8 +80,8 @@ impl Client {
                                 let response: Packet = PubAck { packet_id }.into();
                                 self.packets.send(response).await?;
                             } else if qos == 2 {
-//                                let response: Packet = PubAck { packet_id: publish.packet_id }.into();
-//                                self.packets.send(response).await?;
+                                //                                let response: Packet = PubAck { packet_id: publish.packet_id }.into();
+                                //                                self.packets.send(response).await?;
                             }
                         }
                         PacketType::PUBACK => {
@@ -111,10 +111,7 @@ impl Client {
                     self.packets.send(packet).await?;
                 }
                 Err(e) => {
-                    error!(
-                        "an error occurred while processing messages for {}; error = {:?}",
-                        self.client_id, e
-                    );
+                    error!("an error occurred while processing messages for {}; error = {:?}", self.client_id, e);
                 }
             }
         }
@@ -126,9 +123,14 @@ impl Stream for Client {
     type Item = Result<Message, MQTTError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Poll::Ready(Some(v)) = self.incoming.poll_next_unpin(cx) {
-            return Poll::Ready(Some(Ok(Message::Broadcast(v.into()))));
+        let incoming = self.incoming.try_recv();
+        if incoming.is_ok() {
+            return Poll::Ready(Some(Ok(Message::Broadcast(incoming.unwrap().into()))));
         }
+
+        //        if let Poll::Ready(Some(v)) = self.incoming.poll_next_unpin(cx) {
+        //            return Poll::Ready(Some(Ok(Message::Broadcast(v.into()))));
+        //        }
 
         let result: Option<_> = futures::ready!(self.packets.poll_next_unpin(cx));
 
