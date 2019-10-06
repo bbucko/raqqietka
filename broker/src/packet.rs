@@ -222,7 +222,7 @@ impl Packet {
 }
 
 impl fmt::Display for Packet {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> { write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload) }
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> { write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload) }
 }
 
 #[cfg(test)]

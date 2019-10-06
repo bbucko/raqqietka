@@ -29,7 +29,7 @@ impl From<String> for MQTTError {
 }
 
 impl Display for MQTTError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match *self {
             OtherError(ref err) => write!(f, "{}", err),
             _ => write!(f, "Error"),
