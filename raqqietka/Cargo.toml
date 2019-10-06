@@ -16,6 +16,7 @@ futures-preview = "0.3.0-alpha"
 futures-core-preview = "0.3.0-alpha"
 
 mqtt = { path = "../mqtt" }
+packets = { path = "../packets" }
 broker = { path = "../broker" }
 
 [dev-dependencies]

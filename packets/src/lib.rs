@@ -1,15 +1,210 @@
+#![warn(rust_2018_idioms)]
+
+#[macro_use]
+extern crate enum_primitive_derive;
+#[macro_use]
+extern crate log;
+
 use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::fmt;
 use std::fmt::Error;
 use std::fmt::Formatter;
 
-use bytes::BufMut;
-use bytes::Bytes;
-use bytes::BytesMut;
+use bytes::{BufMut, Bytes, BytesMut};
 use num_traits::ToPrimitive;
 
-use crate::{util, Connect, ConnectAuth, MQTTError, Packet, PacketType, Publish, Subscribe, Unsubscribe, Will};
+mod mqtt_error;
+mod util;
+
+pub type ClientId = String;
+pub type PacketId = u128;
+pub type Topic = String;
+
+#[derive(Debug)]
+pub enum MQTTError {
+    ClientError,
+    ServerError(String),
+    OtherError(String),
+}
+
+//Should be in mqtt
+#[derive(Debug, Clone)]
+pub struct Packet {
+    pub packet_type: PacketType,
+    pub flags: u8,
+    pub payload: Option<Bytes>,
+}
+
+//Should be in mqtt
+#[derive(Debug, Primitive, PartialEq, Clone)]
+pub enum PacketType {
+    CONNECT = 1,
+    CONNACK = 2,
+    PUBLISH = 3,
+    PUBACK = 4,
+    //    PUBREC = 5,
+    //    PUBREL = 6,
+    //    PUBCOMP = 7,
+    SUBSCRIBE = 8,
+    SUBACK = 9,
+    UNSUBSCRIBE = 10,
+    UNSUBACK = 11,
+    PINGREQ = 12,
+    PINGRES = 13,
+    DISCONNECT = 14,
+}
+
+#[derive(Debug)]
+pub struct Connect {
+    pub version: u8,
+    pub client_id: Option<ClientId>,
+    pub auth: Option<ConnectAuth>,
+    pub will: Option<Will>,
+    pub clean_session: bool,
+}
+
+#[derive(Debug)]
+pub struct ConnectAuth {
+    username: String,
+    password: Option<Bytes>,
+}
+
+#[derive(Debug)]
+pub struct Will {
+    qos: u8,
+    retain: bool,
+    topic: String,
+    message: Bytes,
+}
+
+#[derive(Debug)]
+pub struct Subscribe {
+    pub packet_id: u16,
+    pub topics: HashSet<(Topic, u8)>,
+}
+
+#[derive(Debug)]
+pub struct Unsubscribe {
+    pub packet_id: u16,
+    pub topics: HashSet<Topic>,
+}
+
+#[derive(Debug)]
+pub struct Publish {
+    pub packet_id: u16,
+    pub topic: Topic,
+    pub qos: u8,
+    pub payload: Bytes,
+}
+
+#[derive(Debug, Default)]
+pub struct ConnAck {}
+
+#[derive(Debug)]
+pub struct PubAck {
+    pub packet_id: u16,
+}
+
+#[derive(Debug)]
+pub struct SubAck {
+    pub packet_id: u16,
+    pub sub_results: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct UnsubAck {
+    pub packet_id: u16,
+}
+
+#[derive(Debug, Default)]
+pub struct PingResp {}
+
+impl From<PubAck> for Packet {
+    fn from(puback: PubAck) -> Self {
+        info!("Responded with PUBACK for packet id: {}", puback.packet_id);
+
+        let mut payload = BytesMut::with_capacity(2);
+        payload.put_u16_be(puback.packet_id);
+
+        Packet {
+            packet_type: PacketType::PUBACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
+    }
+}
+
+impl From<SubAck> for Packet {
+    fn from(suback: SubAck) -> Self {
+        let mut payload = BytesMut::with_capacity(2 + suback.sub_results.len());
+        payload.put_u16_be(suback.packet_id);
+        payload.extend(suback.sub_results);
+
+        info!("Responded with SUBACK: {:?}", payload);
+
+        Packet {
+            packet_type: PacketType::SUBACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
+    }
+}
+
+impl From<UnsubAck> for Packet {
+    fn from(unsuback: UnsubAck) -> Self {
+        let mut payload = BytesMut::with_capacity(2);
+        payload.put_u16_be(unsuback.packet_id);
+
+        info!("Responded with UNSUBACK: {:?}", payload);
+
+        Packet {
+            packet_type: PacketType::UNSUBACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
+    }
+}
+
+impl From<ConnAck> for Packet {
+    fn from(_: ConnAck) -> Self {
+        let mut payload = BytesMut::with_capacity(2);
+        payload.put_u8(0b0000_0000);
+        payload.put_u8(0b0000_0000);
+
+        info!("Responded with CONNACK");
+
+        Packet {
+            packet_type: PacketType::CONNACK,
+            flags: 0,
+            payload: Some(payload.freeze()),
+        }
+    }
+}
+
+impl From<PingResp> for Packet {
+    fn from(_: PingResp) -> Self {
+        Packet {
+            packet_type: PacketType::PINGRES,
+            flags: 0,
+            payload: None,
+        }
+    }
+}
+
+impl TryFrom<Packet> for PubAck {
+    type Error = MQTTError;
+
+    fn try_from(packet: Packet) -> Result<Self, Self::Error> {
+        assert_eq!(PacketType::PUBACK, packet.packet_type);
+        let payload = packet.payload.ok_or("malformed")?;
+        let (packet_id, payload) = util::take_u18(&payload)?;
+
+        assert!(payload.is_empty());
+
+        Ok(PubAck { packet_id })
+    }
+}
 
 impl TryFrom<Packet> for Connect {
     type Error = MQTTError;
@@ -399,5 +594,14 @@ mod tests {
     fn test_publish() {
         let header = Packet::type_and_flags(&PacketType::PUBLISH, 0b0000_1111);
         assert_eq!(header, 0b0011_1111);
+    }
+
+    #[test]
+    fn test_connack() {
+        let conn_ack: Packet = ConnAck::default().into();
+        assert_eq!(
+            Bytes::from(&[0b0010_0000, 0b0000_0010, 0b0000_0000, 0b0000_0000][..]),
+            Into::<Bytes>::into(conn_ack)
+        );
     }
 }

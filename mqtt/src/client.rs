@@ -12,9 +12,10 @@ use tokio::io;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 
-use broker::{Broker, ClientId, Connect, MQTTError, Packet, PacketType, Publish, Subscribe, Unsubscribe};
+use broker::{Broker, ClientId};
+use packets::{ConnAck, Connect, MQTTError, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
 
-use crate::{Client, ConnAck, Message, PacketsCodec, PingResp, PubAck, SubAck};
+use crate::{Client, Message, PacketsCodec};
 
 pub type FramedPackets = Framed<TcpStream, PacketsCodec>;
 
@@ -28,7 +29,7 @@ impl Client {
         broker.lock().await.register(client_id.clone().as_str(), outgoing)?;
 
         //Respond with CONNACK
-        let conn_ack: Packet = ConnAck {}.into();
+        let conn_ack: Packet = ConnAck::default().into();
         packets.send(conn_ack).await?;
 
         let client = Client {
@@ -90,7 +91,7 @@ impl Client {
                             broker.acknowledge(puback.packet_id)?;
                         }
                         PacketType::PINGREQ => {
-                            let ping_resp: Packet = PingResp {}.into();
+                            let ping_resp: Packet = PingResp::default().into();
 
                             self.packets.send(ping_resp).await?;
                         }

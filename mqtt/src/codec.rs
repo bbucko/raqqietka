@@ -1,13 +1,13 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::codec::{Decoder, Encoder};
 
-use broker::{MQTTError, Packet, PacketType};
+use packets::{MQTTError, Packet, PacketType};
 
 use crate::num_traits::FromPrimitive;
-use crate::{util, PacketsCodec};
+use crate::PacketsCodec;
 
 impl PacketsCodec {
-    pub fn new() -> PacketsCodec { PacketsCodec {} }
+    pub fn new() -> PacketsCodec { PacketsCodec::default() }
 }
 
 impl Decoder for PacketsCodec {
@@ -24,7 +24,7 @@ impl Decoder for PacketsCodec {
         let packet_type = PacketType::from_u8(control_and_flags >> 4).unwrap();
         let flags = control_and_flags & 0b0000_1111;
 
-        let (payload_length, header_length) = match util::decode_length(src, 1)? {
+        let (payload_length, header_length) = match decode_length(src, 1)? {
             Some((payload_length, read_bytes)) => (payload_length, read_bytes + 1),
             None => {
                 return Ok(None);
@@ -58,4 +58,29 @@ impl Encoder for PacketsCodec {
         dst.put(bytes);
         return Ok(());
     }
+}
+
+fn decode_length(buffer: &mut BytesMut, start: usize) -> Result<Option<(usize, usize)>, MQTTError> {
+    let mut multiplier = 1;
+    let mut value = 0;
+    let mut index = start;
+
+    loop {
+        if buffer.len() < index {
+            return Ok(None);
+        };
+
+        let encoded_byte = buffer[index];
+        value += (encoded_byte & 127) as usize * multiplier;
+        if multiplier > 128 * 128 * 128 {
+            return Err("unknown_error".into());
+        }
+        multiplier *= 128;
+
+        if encoded_byte & 128 == 0 {
+            break;
+        }
+        index += 1;
+    }
+    Ok(Some((value, index)))
 }

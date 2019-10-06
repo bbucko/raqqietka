@@ -13,8 +13,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 use tokio::sync::Mutex;
 
-use broker::{Broker, Connect};
+use broker::Broker;
 use mqtt::{Client, PacketsCodec};
+use packets::Connect;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

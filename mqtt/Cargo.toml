@@ -16,6 +16,7 @@ tokio = "0.2.0-alpha"
 futures-preview = "0.3.0-alpha"
 futures-core-preview = "0.3.0-alpha"
 broker = {path = "../broker"}
+packets = {path = "../packets"}
 
 [dev-dependencies]
 matches = "0.1"

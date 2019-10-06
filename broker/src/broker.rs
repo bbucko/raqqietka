@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fmt::Formatter;
 
-use crate::{Broker, ClientId, MQTTError, Packet, Publish, Subscribe, Tx, Unsubscribe};
+use crate::{Broker, ClientId, Packet, Tx};
+use packets::{MQTTError, Subscribe, Unsubscribe, Publish};
 
 impl Broker {
     pub fn new() -> Self {
@@ -177,9 +178,10 @@ mod tests {
     use futures_util::StreamExt;
     use tokio::sync::mpsc;
 
-    use crate::{Connect, Rx};
+    use crate::Rx;
 
     use super::*;
+    use packets::{Subscribe, Publish, Connect};
 
     #[test]
     fn test_broker_connect() {

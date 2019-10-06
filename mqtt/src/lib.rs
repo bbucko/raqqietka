@@ -10,14 +10,14 @@ use std::time::SystemTime;
 use num_traits;
 use tokio::sync::Mutex;
 
-use broker::{util, Broker, ClientId, Packet, Rx};
+use broker::{Broker, ClientId, Rx};
 use client::FramedPackets;
+use packets::Packet;
 
 mod client;
 mod codec;
-mod packets;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PacketsCodec {}
 
 #[derive(Debug)]
@@ -36,25 +36,3 @@ pub struct Client {
     broker: Arc<Mutex<Broker>>,
     last_received_packet: SystemTime,
 }
-
-#[derive(Debug)]
-pub struct ConnAck {}
-
-#[derive(Debug)]
-pub struct PubAck {
-    pub packet_id: u16,
-}
-
-#[derive(Debug)]
-pub struct SubAck {
-    pub packet_id: u16,
-    pub sub_results: Vec<u8>,
-}
-
-#[derive(Debug)]
-pub struct UnsubAck {
-    pub packet_id: u16,
-}
-
-#[derive(Debug)]
-pub struct PingResp {}
