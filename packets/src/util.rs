@@ -50,31 +50,6 @@ pub fn take_string(bytes: &[u8]) -> Result<(String, &[u8]), MQTTError> {
 
 pub fn check_flag(flags: u8, position: usize) -> bool { (flags >> position) & 1u8 == 1u8 }
 
-pub fn decode_length(buffer: &mut BytesMut, start: usize) -> Result<Option<(usize, usize)>, MQTTError> {
-    let mut multiplier = 1;
-    let mut value = 0;
-    let mut index = start;
-
-    loop {
-        if buffer.len() < index {
-            return Ok(None);
-        };
-
-        let encoded_byte = buffer[index];
-        value += (encoded_byte & 127) as usize * multiplier;
-        if multiplier > 128 * 128 * 128 {
-            return Err("unknown_error".into());
-        }
-        multiplier *= 128;
-
-        if encoded_byte & 128 == 0 {
-            break;
-        }
-        index += 1;
-    }
-    Ok(Some((value, index)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
