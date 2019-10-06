@@ -12,9 +12,9 @@ use tokio::io;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 
-use broker::{Broker, ClientId, Connect, Packet, PacketType, Publish, Subscribe, Unsubscribe, MQTTError};
+use broker::{Broker, ClientId, Connect, MQTTError, Packet, PacketType, Publish, Subscribe, Unsubscribe};
 
-use crate::{Client, ConnAck, Message, PacketsCodec, PubAck, SubAck, PingResp};
+use crate::{Client, ConnAck, Message, PacketsCodec, PingResp, PubAck, SubAck};
 
 pub type FramedPackets = Framed<TcpStream, PacketsCodec>;
 
@@ -140,7 +140,7 @@ impl Stream for Client {
 }
 
 impl fmt::Display for Client {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Client(clientId: {}, addr: {})", self.client_id, self.addr)
     }
 }

@@ -1,12 +1,13 @@
-extern crate enum_primitive_derive;
+#![warn(rust_2018_idioms)]
+
 #[macro_use]
 extern crate log;
-extern crate num_traits;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use num_traits;
 use tokio::sync::Mutex;
 
 use broker::{util, Broker, ClientId, Packet, Rx};

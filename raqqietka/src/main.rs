@@ -1,9 +1,7 @@
-extern crate bytes;
+#![warn(rust_2018_idioms)]
+
 #[macro_use]
 extern crate log;
-extern crate num_traits;
-extern crate regex_cache;
-extern crate tokio;
 
 use std::convert::TryInto;
 use std::net::SocketAddr;
