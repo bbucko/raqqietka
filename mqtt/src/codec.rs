@@ -1,7 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::codec::{Decoder, Encoder};
 
-use packets::{MQTTError, Packet, PacketType};
+use core::{MQTTError, Packet, PacketType};
 
 use crate::num_traits::FromPrimitive;
 use crate::PacketsCodec;

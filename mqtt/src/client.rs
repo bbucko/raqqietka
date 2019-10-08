@@ -12,9 +12,9 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 
 use broker::{Broker, ClientId};
-use packets::{ConnAck, Connect, MQTTError, MQTTResult, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
+use core::{ConnAck, Connect, MQTTError, MQTTResult, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
 
-use crate::{Client, Message, PacketsCodec};
+use crate::{Client, Message, MQTTPublisher, PacketsCodec};
 
 pub type FramedPackets = Framed<TcpStream, PacketsCodec>;
 
@@ -26,7 +26,9 @@ impl Client {
         let (outgoing, incoming) = mpsc::unbounded_channel();
 
         //Register client in the broker
-        broker.lock().await.register(client_id.clone().as_str(), outgoing)?;
+        let publisher = MQTTPublisher::new(client_id.clone(), outgoing);
+
+        broker.lock().await.register(client_id.clone().as_str(), Box::new(publisher))?;
 
         //Respond with CONNACK
         packets.send(ConnAck::default().into()).await?;
@@ -79,7 +81,7 @@ impl Client {
                                 self.packets.send(response).await?;
                             } else if qos == 2 {
                                 //let response: Packet = PubAck { packet_id: publish.packet_id }.into();
-                                //self.packets.send(response).await?;
+                                //self.core.send(response).await?;
                             }
 
                             broker.publish(publish)?;

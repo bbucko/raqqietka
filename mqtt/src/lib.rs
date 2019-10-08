@@ -8,14 +8,17 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use num_traits;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
-use broker::{Broker, ClientId, Rx};
+use broker::{Broker, ClientId};
 use client::FramedPackets;
-use packets::Packet;
+use core::{MQTTError, MQTTResult, Packet, Publisher};
 
 mod client;
 mod codec;
+
+pub type Tx = mpsc::UnboundedSender<Packet>;
+pub type Rx = mpsc::UnboundedReceiver<Packet>;
 
 #[derive(Debug, Default)]
 pub struct PacketsCodec {}
@@ -35,4 +38,22 @@ pub struct Client {
     incoming: Rx,
     broker: Arc<Mutex<Broker>>,
     last_received_packet: SystemTime,
+}
+
+#[derive(Debug)]
+pub struct MQTTPublisher {
+    client_id: ClientId,
+    tx: Tx,
+}
+
+impl MQTTPublisher {
+    pub fn new(client_id: ClientId, tx: Tx) -> Self {
+        MQTTPublisher { tx, client_id }
+    }
+}
+
+impl Publisher for MQTTPublisher {
+    fn publish_msg(&self, packet: Packet) -> MQTTResult<()> {
+        self.tx.clone().try_send(packet).map_err(|e| MQTTError::ServerError(e.to_string()))
+    }
 }

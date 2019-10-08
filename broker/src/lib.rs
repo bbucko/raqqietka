@@ -1,8 +1,10 @@
 #![warn(rust_2018_idioms)]
-#![feature(async_closure)]
+#![feature(test)]
 
 #[macro_use]
 extern crate log;
+#[cfg(test)]
+extern crate test;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -11,27 +13,23 @@ use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
 
 use bytes::Bytes;
-use tokio_sync::mpsc;
 
-use packets::{MQTTError, MQTTResult, Packet, Publish, Subscribe, Unsubscribe};
+use core::{MQTTError, MQTTResult, Packet, Publish, Publisher, Subscribe, Unsubscribe};
 
 pub type ClientId = String;
 pub type PacketId = u128;
 pub type Topic = String;
 
-pub type Tx = mpsc::UnboundedSender<Packet>;
-pub type Rx = mpsc::UnboundedReceiver<Packet>;
-
 #[derive(Default)]
 pub struct Broker {
-    clients: HashMap<ClientId, Tx>,
+    clients: HashMap<ClientId, Box<dyn Publisher>>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
     _messages: HashSet<ApplicationMessage>,
     _last_packet: HashMap<ClientId, HashMap<Topic, PacketId>>,
 }
 
 #[derive(Eq, Debug)]
-pub struct ApplicationMessage {
+struct ApplicationMessage {
     id: PacketId,
     payload: Bytes,
     topic: Topic,
@@ -56,10 +54,10 @@ impl Broker {
         Broker::default()
     }
 
-    pub fn register(&mut self, client_id: &str, tx: Tx) -> MQTTResult<()> {
+    pub fn register(&mut self, client_id: &str, publisher: Box<dyn Publisher>) -> MQTTResult<()> {
         info!("Client: {:?} has connected to broker", &client_id);
 
-        self.clients.insert(client_id.to_owned(), tx);
+        self.clients.insert(client_id.to_owned(), publisher);
         Ok(())
     }
 
@@ -109,13 +107,12 @@ impl Broker {
             .filter(|(subscription, _)| Broker::filter_matches_topic(subscription, &topic))
             .flat_map(|(_, client_ips)| client_ips)
             .flat_map(|client_id| clients.get(client_id))
-            .for_each(|tx| {
-                let tx = tx.clone();
-                let packet = publish.clone();
-                if let Err(e) = tx.clone().try_send(packet) {
-                    error!("Publishing failed: {:?}", e);
-                }
+            .for_each(|publisher| {
+                if let Err(e) = publisher.publish_msg(publish.clone()) {
+                    error!("Error ({}) occurred while publishing message to {:?}", e.to_string(), publisher);
+                };
             });
+
         Ok(())
     }
 
@@ -206,6 +203,9 @@ impl Broker {
         info!("Client: {:?} has disconnected from broker", client_id);
 
         self.clients.remove(&client_id);
+        self.subscriptions.iter_mut().for_each(|(_, clients)| {
+            clients.remove(&client_id);
+        });
     }
 }
 
@@ -219,10 +219,10 @@ impl std::fmt::Debug for Broker {
 mod tests {
     use bytes::Bytes;
     use futures::executor::block_on;
+    use tokio::sync::mpsc;
 
-    use packets::{Connect, Publish, Subscribe};
-
-    use crate::Rx;
+    use core::{Connect, PacketType, Publish, Subscribe};
+    use mqtt::{MQTTPublisher, Rx, Tx};
 
     use super::*;
 
@@ -439,15 +439,40 @@ mod tests {
     fn register_client(broker: &mut Broker, client_id: &str) -> Rx {
         let connect = Connect {
             version: 3,
-            client_id: Some(client_id.to_string()),
+            client_id: Some(client_id.clone().to_string()),
             auth: None,
             will: None,
             clean_session: false,
         };
         let (tx, rx) = mpsc::unbounded_channel();
 
-        let _ = broker.register(&connect.client_id.unwrap(), tx);
-
+        let _ = broker.register(&connect.client_id.unwrap(), Box::new(MQTTPublisher::new(client_id.clone().to_string(), tx)));
         rx
+    }
+
+    #[bench]
+    fn test_publish_through_direct(b: &mut test::Bencher) {
+        let (tx, _) = mpsc::unbounded_channel();
+        let mut map: HashMap<String, Tx> = HashMap::new();
+        map.insert("abc".to_string(), tx);
+
+        b.iter(|| map.get("abc").unwrap().clone().try_send(create_packet()));
+    }
+
+    #[bench]
+    fn test_publish_through_trait(b: &mut test::Bencher) {
+        let (tx, _) = mpsc::unbounded_channel();
+        let mut map: HashMap<String, Box<dyn Publisher>> = HashMap::new();
+        map.insert("abc".to_string(), Box::new(MQTTPublisher::new("abc".to_string(), tx)));
+
+        b.iter(|| map.get_mut("abc").unwrap().publish_msg(create_packet()));
+    }
+
+    fn create_packet() -> Packet {
+        Packet {
+            packet_type: PacketType::CONNECT,
+            flags: 0,
+            payload: Option::None,
+        }
     }
 }

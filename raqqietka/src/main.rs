@@ -14,8 +14,8 @@ use tokio::prelude::*;
 use tokio::sync::Mutex;
 
 use broker::Broker;
+use core::Connect;
 use mqtt::{Client, PacketsCodec};
-use packets::Connect;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

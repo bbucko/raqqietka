@@ -11,5 +11,5 @@ bytes = "0.4"
 tokio = "0.2.0-alpha"
 
 mqtt = { path = "../mqtt" }
-packets = { path = "../packets" }
+core = { path = "../core" }
 broker = { path = "../broker" }
