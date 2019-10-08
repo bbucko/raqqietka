@@ -8,7 +8,7 @@ extern crate log;
 use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::fmt;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::result;
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -23,7 +23,7 @@ pub type Topic = String;
 
 pub type MQTTResult<T> = result::Result<T, MQTTError>;
 
-pub trait Publisher: Send + Debug {
+pub trait Publisher: Send + Debug + Display {
     fn publish_msg(&self, packet: Packet) -> MQTTResult<()>;
 }
 

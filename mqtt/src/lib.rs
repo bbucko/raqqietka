@@ -13,6 +13,8 @@ use tokio::sync::{mpsc, Mutex};
 use broker::{Broker, ClientId};
 use client::FramedPackets;
 use core::{MQTTError, MQTTResult, Packet, Publisher};
+use std::fmt;
+use std::fmt::{Display, Formatter};
 
 mod client;
 mod codec;
@@ -55,5 +57,11 @@ impl MQTTPublisher {
 impl Publisher for MQTTPublisher {
     fn publish_msg(&self, packet: Packet) -> MQTTResult<()> {
         self.tx.clone().try_send(packet).map_err(|e| MQTTError::ServerError(e.to_string()))
+    }
+}
+
+impl Display for MQTTPublisher {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "MQTT Publisher: ({})", self.client_id)
     }
 }

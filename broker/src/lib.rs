@@ -1,5 +1,6 @@
 #![warn(rust_2018_idioms)]
 #![feature(test)]
+#![feature(integer_atomics)]
 
 #[macro_use]
 extern crate log;
@@ -11,6 +12,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::Ordering::SeqCst;
 
 use bytes::Bytes;
 
@@ -25,14 +27,33 @@ pub struct Broker {
     clients: HashMap<ClientId, Box<dyn Publisher>>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
     _messages: HashSet<ApplicationMessage>,
-    _last_packet: HashMap<ClientId, HashMap<Topic, PacketId>>,
+    packet_counter: HashMap<Topic, std::sync::atomic::AtomicU128>,
+    last_packet: HashMap<ClientId, HashMap<Topic, PacketId>>,
 }
 
-#[derive(Eq, Debug)]
+#[derive(Eq, Debug, Clone)]
 struct ApplicationMessage {
     id: PacketId,
     payload: Bytes,
     topic: Topic,
+}
+
+impl From<ApplicationMessage> for Publish {
+    fn from(application_message: ApplicationMessage) -> Self {
+        Publish {
+            packet_id: application_message.id as u16,
+            topic: application_message.topic,
+            qos: 0,
+            payload: application_message.payload,
+        }
+    }
+}
+
+impl From<ApplicationMessage> for Packet {
+    fn from(application_message: ApplicationMessage) -> Self {
+        let publish: Publish = application_message.into();
+        publish.into()
+    }
 }
 
 impl Hash for ApplicationMessage {
@@ -96,20 +117,46 @@ impl Broker {
     }
 
     pub fn publish(&mut self, publish: Publish) -> MQTTResult<()> {
-        let subscriptions = &mut self.subscriptions;
-        let clients = &mut self.clients;
-
         let topic = publish.topic.clone();
-        let publish: Packet = publish.into();
+
+        let subscriptions = &mut self.subscriptions;
+        let last_packet_per_topic = &mut self.last_packet;
+        let clients = &mut self.clients;
+        let packet_id: u128 = self
+            .packet_counter
+            .entry(topic.clone())
+            .or_insert(std::sync::atomic::AtomicU128::new(0))
+            .fetch_add(1, SeqCst);
+
+        let application_message = ApplicationMessage {
+            id: packet_id,
+            payload: publish.payload,
+            topic: topic.clone(),
+        };
 
         subscriptions
             .iter()
             .filter(|(subscription, _)| Broker::filter_matches_topic(subscription, &topic))
             .flat_map(|(_, client_ips)| client_ips)
-            .flat_map(|client_id| clients.get(client_id))
-            .for_each(|publisher| {
-                if let Err(e) = publisher.publish_msg(publish.clone()) {
-                    error!("Error ({}) occurred while publishing message to {:?}", e.to_string(), publisher);
+            .map(|client_id| (clients.get(client_id), client_id))
+            .filter(|(publisher, _)| publisher.is_some())
+            .map(|(publisher, client_id)| (publisher.unwrap(), client_id))
+            .for_each(|(publisher, client_id)| {
+                info!("Publishing msg to {}", &publisher);
+                let application_message = application_message.clone();
+                let application_message_id = application_message.id.clone();
+                let topic = application_message.topic.clone();
+
+                match publisher.publish_msg(application_message.into()) {
+                    Ok(()) => {
+                        last_packet_per_topic
+                            .entry(client_id.to_string())
+                            .or_insert(HashMap::new())
+                            .insert(topic, application_message_id);
+                    }
+                    Err(e) => {
+                        error!("Error ({}) occurred while publishing message to {:?}", e.to_string(), publisher);
+                    }
                 };
             });
 
