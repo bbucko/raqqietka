@@ -13,20 +13,25 @@ use std::fmt;
 use std::fmt::Formatter;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::Ordering::SeqCst;
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 use bytes::Bytes;
 
-use core::{MQTTError, MQTTResult, Packet, Publish, Publisher, Subscribe, Unsubscribe};
+use core::{MQTTResult, Packet, Publish, Publisher, Subscribe, Unsubscribe};
+
+use crate::validator::{validate_publish, validate_subscribe};
 
 pub type ClientId = String;
 pub type PacketId = u128;
 pub type Topic = String;
 
+mod validator;
+
 #[derive(Default)]
 pub struct Broker {
     clients: HashMap<ClientId, Box<dyn Publisher>>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
-    _messages: HashSet<ApplicationMessage>,
+    message_bus: HashMap<Topic, (Sender<ApplicationMessage>, Receiver<ApplicationMessage>)>,
     packet_counter: HashMap<Topic, std::sync::atomic::AtomicU128>,
     last_packet: HashMap<ClientId, HashMap<Topic, PacketId>>,
 }
@@ -87,10 +92,12 @@ impl Broker {
         for (topic, qos) in subscribe.topics {
             info!("Client: {} has subscribed to topic: {} with qos {}", client_id, topic, qos);
 
-            Broker::validate_subscribe(&topic)?;
+            validate_subscribe(&topic)?;
+
+            self.message_bus.entry(topic.clone()).or_insert(channel());
 
             self.subscriptions
-                .entry(topic.to_owned())
+                .entry(topic.clone())
                 .or_insert_with(HashSet::new)
                 .insert(client_id.to_string());
 
@@ -113,7 +120,7 @@ impl Broker {
     }
 
     pub fn validate(&self, publish: &Publish) -> MQTTResult<()> {
-        Broker::validate_publish(&publish.topic)
+        validate_publish(&publish.topic)
     }
 
     pub fn publish(&mut self, publish: Publish) -> MQTTResult<()> {
@@ -133,6 +140,8 @@ impl Broker {
             payload: publish.payload,
             topic: topic.clone(),
         };
+
+        self.message_bus.get(&topic).map(|(tx, _)| tx.send(application_message.clone()));
 
         subscriptions
             .iter()
@@ -199,48 +208,6 @@ impl Broker {
                 //compare char
                 if topic_char != sub_char {
                     return false;
-                }
-            }
-        }
-    }
-
-    pub fn validate_publish(topic: &str) -> MQTTResult<()> {
-        if topic.chars().all(|c| (char::is_alphanumeric(c) || c == '/') && c != '#' && c != '+') {
-            return Ok(());
-        }
-        Err(format!("invalid_topic_path: {}", topic).into())
-    }
-
-    fn validate_subscribe(filter: &str) -> MQTTResult<()> {
-        let mut peekable = filter.chars().peekable();
-        loop {
-            match peekable.next() {
-                None => return Ok(()),
-                Some('#') => {
-                    if peekable.peek().is_some() {
-                        return Err(MQTTError::ClientError(format!("invalid_topic_filter: {}", filter)));
-                    }
-                }
-                Some('+') => {
-                    if let Some(&next) = peekable.peek() {
-                        if next != '/' {
-                            return Err(MQTTError::ClientError(format!("invalid_topic_filter: {}", filter)));
-                        }
-                    }
-                }
-                Some('/') => {
-                    if let Some(&next) = peekable.peek() {
-                        if !(next == '+' || next == '/' || next == '#' || char::is_alphanumeric(next)) {
-                            return Err(MQTTError::ClientError(format!("invalid_topic_filter: {}", filter)));
-                        }
-                    }
-                }
-                Some(_) => {
-                    if let Some(&next) = peekable.peek() {
-                        if !(next == '/' || char::is_alphanumeric(next)) {
-                            return Err(MQTTError::ClientError(format!("invalid_topic_filter: {}", filter)));
-                        }
-                    }
                 }
             }
         }
@@ -318,9 +285,9 @@ mod tests {
         let mut broker = Broker::new();
         let client_id = "client_id";
         register_client(&mut broker, client_id);
-        subscribe_client(&mut broker, client_id, &["/topic", "/second/topic", "/third/topic"]);
+        subscribe_client(&mut broker, client_id, &simple_topics());
 
-        for topic in vec!["/topic", "/second/topic", "/third/topic"] {
+        for topic in simple_topics() {
             assert!(broker.subscriptions.contains_key(topic));
             assert!(broker.subscriptions.get(topic).unwrap().contains(client_id));
         }
@@ -388,9 +355,9 @@ mod tests {
         let mut broker = Broker::new();
         let client_id = "client_id";
         let mut rx = register_client(&mut broker, client_id);
-        subscribe_client(&mut broker, client_id, &["/topic", "/second/topic", "/third/topic"]);
+        subscribe_client(&mut broker, client_id, &simple_topics());
 
-        for topic in vec!["/topic", "/second/topic", "/third/topic"] {
+        for topic in simple_topics() {
             let publish = Publish {
                 packet_id: 1,
                 topic: topic.to_owned(),
@@ -402,9 +369,29 @@ mod tests {
 
         rx.close();
 
-        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x06/topic\0\x01test")));
-        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\r/second/topic\0\x01test")));
-        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0c/third/topic\0\x01test")));
+        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x06/topic\0\0test")));
+        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\r/second/topic\0\0test")));
+        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0c/third/topic\0\0test")));
+        assert!(block_on(rx.recv()).is_none());
+    }
+
+    #[test]
+    fn test_broker_publish_without_subscription() {
+        let mut broker = Broker::new();
+        let client_id = "client_id";
+        let mut rx = register_client(&mut broker, client_id);
+
+        for topic in simple_topics() {
+            let publish = Publish {
+                packet_id: 1,
+                topic: topic.to_owned(),
+                qos: 0,
+                payload: Bytes::from("test"),
+            };
+            assert!(broker.publish(publish).is_ok(), "Publish failed for topic: {}", topic);
+        }
+
+        rx.close();
         assert!(block_on(rx.recv()).is_none());
     }
 
@@ -426,7 +413,7 @@ mod tests {
         }
 
         rx.close();
-        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
+        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\0test")));
         assert!(block_on(rx.recv()).is_none());
     }
 
@@ -448,7 +435,7 @@ mod tests {
         }
 
         rx.close();
-        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x01test")));
+        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\0test")));
         assert!(block_on(rx.recv()).is_none());
     }
 
@@ -459,7 +446,7 @@ mod tests {
         let mut rx = register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic/#"]);
 
-        for topic in vec!["/topic/oneLevel", "/topic/two/levels", "/topic/oneLevel/first", "/different/topic"] {
+        for topic in vec!["/topic/oneLevel", "/different/topic"] {
             let publish = Publish {
                 packet_id: 1,
                 topic: topic.to_owned(),
@@ -470,10 +457,30 @@ mod tests {
         }
 
         rx.close();
-        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
-        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x11/topic/two/levels\0\x01test")));
-        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x01test")));
+        assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\0test")));
         assert!(block_on(rx.recv()).is_none());
+    }
+
+    #[bench]
+    fn test_publish_through_direct(b: &mut test::Bencher) {
+        let (tx, _) = mpsc::unbounded_channel();
+        let mut map: HashMap<String, Tx> = HashMap::new();
+        map.insert("abc".to_string(), tx);
+
+        b.iter(|| map.get("abc").unwrap().clone().try_send(create_packet()));
+    }
+
+    #[bench]
+    fn test_publish_through_trait(b: &mut test::Bencher) {
+        let (tx, _) = mpsc::unbounded_channel();
+        let mut map: HashMap<String, Box<dyn Publisher>> = HashMap::new();
+        map.insert("abc".to_string(), Box::new(MQTTPublisher::new("abc".to_string(), tx)));
+
+        b.iter(|| map.get_mut("abc").unwrap().publish_msg(create_packet()));
+    }
+
+    fn simple_topics() -> Vec<&'static str> {
+        vec!["/topic", "/second/topic", "/third/topic"]
     }
 
     fn subscribe_client(broker: &mut Broker, client_id: &str, topics: &[&str]) {
@@ -495,24 +502,6 @@ mod tests {
 
         let _ = broker.register(&connect.client_id.unwrap(), Box::new(MQTTPublisher::new(client_id.clone().to_string(), tx)));
         rx
-    }
-
-    #[bench]
-    fn test_publish_through_direct(b: &mut test::Bencher) {
-        let (tx, _) = mpsc::unbounded_channel();
-        let mut map: HashMap<String, Tx> = HashMap::new();
-        map.insert("abc".to_string(), tx);
-
-        b.iter(|| map.get("abc").unwrap().clone().try_send(create_packet()));
-    }
-
-    #[bench]
-    fn test_publish_through_trait(b: &mut test::Bencher) {
-        let (tx, _) = mpsc::unbounded_channel();
-        let mut map: HashMap<String, Box<dyn Publisher>> = HashMap::new();
-        map.insert("abc".to_string(), Box::new(MQTTPublisher::new("abc".to_string(), tx)));
-
-        b.iter(|| map.get_mut("abc").unwrap().publish_msg(create_packet()));
     }
 
     fn create_packet() -> Packet {

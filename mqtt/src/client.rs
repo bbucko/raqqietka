@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, Mutex};
 use broker::{Broker, ClientId};
 use core::{ConnAck, Connect, MQTTError, MQTTResult, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
 
-use crate::{Client, Message, MQTTPublisher, PacketsCodec};
+use crate::{Client, MQTTPublisher, Message, PacketsCodec};
 
 pub type FramedPackets = Framed<TcpStream, PacketsCodec>;
 

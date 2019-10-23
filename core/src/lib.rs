@@ -27,7 +27,7 @@ pub trait Publisher: Send + Debug + Display {
     fn publish_msg(&self, packet: Packet) -> MQTTResult<()>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum MQTTError {
     ClientError(String),
     ServerError(String),
