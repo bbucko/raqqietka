@@ -129,7 +129,7 @@ impl Broker {
         let subscriptions = &mut self.subscriptions;
         let last_packet_per_topic = &mut self.last_packet;
         let clients = &mut self.clients;
-        let packet_id: PacketId =
+        let packet_id: PacketId = self
             .packet_counter
             .entry(topic.clone())
             .or_insert(std::sync::atomic::AtomicU64::new(0))
