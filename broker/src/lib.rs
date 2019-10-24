@@ -22,7 +22,7 @@ use core::{MQTTResult, Packet, Publish, Publisher, Subscribe, Unsubscribe};
 use crate::validator::{validate_publish, validate_subscribe};
 
 pub type ClientId = String;
-pub type PacketId = u128;
+pub type PacketId = u64;
 pub type Topic = String;
 
 mod validator;
@@ -32,7 +32,7 @@ pub struct Broker {
     clients: HashMap<ClientId, Box<dyn Publisher>>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
     message_bus: HashMap<Topic, (Sender<ApplicationMessage>, Receiver<ApplicationMessage>)>,
-    packet_counter: HashMap<Topic, std::sync::atomic::AtomicU128>,
+    packet_counter: HashMap<Topic, std::sync::atomic::AtomicU64>,
     last_packet: HashMap<ClientId, HashMap<Topic, PacketId>>,
 }
 
@@ -129,10 +129,10 @@ impl Broker {
         let subscriptions = &mut self.subscriptions;
         let last_packet_per_topic = &mut self.last_packet;
         let clients = &mut self.clients;
-        let packet_id: u128 = self
+        let packet_id: PacketId =
             .packet_counter
             .entry(topic.clone())
-            .or_insert(std::sync::atomic::AtomicU128::new(0))
+            .or_insert(std::sync::atomic::AtomicU64::new(0))
             .fetch_add(1, SeqCst);
 
         let application_message = ApplicationMessage {
