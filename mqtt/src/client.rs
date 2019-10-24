@@ -46,7 +46,7 @@ impl Client {
         Ok((client, client_id))
     }
 
-    pub async fn poll(mut self: Client) -> MQTTResult<()> {
+    pub async fn poll(mut self: Self) -> MQTTResult<()> {
         while let Some(result) = self.next().await {
             match result {
                 Ok(Message::Received(packet)) => {
@@ -81,7 +81,7 @@ impl Client {
                                 self.packets.send(response).await?;
                             } else if qos == 2 {
                                 //let response: Packet = PubAck { packet_id: publish.packet_id }.into();
-                                //self.core.send(response).await?;
+                                //self.packets.send(response).await?;
                             }
 
                             broker.publish(publish)?;
