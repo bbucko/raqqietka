@@ -25,9 +25,9 @@ fn test_broker_publish_with_plain_subscription() {
 
     rx.close();
 
-    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x06/topic\0\x01test")));
-    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\r/second/topic\0\x01test")));
-    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0c/third/topic\0\x01test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x06/topic\0\x00test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\r/second/topic\0\x00test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0c/third/topic\0\x00test")));
     assert!(block_on(rx.recv()).is_none());
 }
 
@@ -49,7 +49,7 @@ fn test_broker_publish_with_wildcard_one_level_subscription() {
     }
 
     rx.close();
-    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x00test")));
     assert!(block_on(rx.recv()).is_none());
 }
 
@@ -71,7 +71,7 @@ fn test_broker_publish_with_wildcard_one_level_in_the_middle_subscription() {
     }
 
     rx.close();
-    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x01test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x00test")));
     assert!(block_on(rx.recv()).is_none());
 }
 
@@ -93,12 +93,37 @@ fn test_broker_publish_with_wildcard_multilevel_at_the_end_subscription() {
     }
 
     rx.close();
-    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x01test")));
-    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x11/topic/two/levels\0\x01test")));
-    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x01test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0f/topic/oneLevel\0\x00test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x11/topic/two/levels\0\x00test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x15/topic/oneLevel/first\0\x00test")));
     assert!(block_on(rx.recv()).is_none());
 }
 
+#[test]
+fn test_broker_publish_increasing_counter() {
+    let mut broker = Broker::new();
+    let client_id = "client_id";
+    let mut rx = register_client(&mut broker, client_id);
+    let topic = "/topic/abc";
+    subscribe_client(&mut broker, client_id, &[topic]);
+
+    assert!(broker.publish(publish(1, topic)).is_ok(), "Publish failed for topic: {}", topic);
+    assert!(broker.publish(publish(2, topic)).is_ok(), "Publish failed for topic: {}", topic);
+
+    rx.close();
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\n/topic/abc\0\x00test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\n/topic/abc\0\x01test")));
+    assert!(block_on(rx.recv()).is_none());
+}
+
+fn publish(packet_id: u16, topic: &str) -> Publish {
+    Publish {
+        packet_id: packet_id,
+        topic: topic.to_owned(),
+        qos: 0,
+        payload: Bytes::from("test"),
+    }
+}
 
 fn subscribe_client(broker: &mut Broker, client_id: &str, topics: &[&str]) {
     let topics = topics.iter().map(|str| (str.to_string(), 1)).collect();
