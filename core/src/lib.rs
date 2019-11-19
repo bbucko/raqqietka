@@ -229,7 +229,7 @@ impl TryFrom<Packet> for Connect {
         assert!(payload.is_empty());
 
         Ok(Connect {
-            version: version,
+            version,
             client_id: Some(client_id),
             auth,
             will,
@@ -349,10 +349,16 @@ impl From<Publish> for Packet {
 
         let payload = publish.payload;
         let topic = util::encode_string(publish.topic);
+        let packet_id_present = publish.qos > 0;
+        let packet_id_size = if packet_id_present { 2 } else { 0 };
 
-        let mut packet = BytesMut::with_capacity(topic.len() + 2 + payload.len());
+        let mut packet = BytesMut::with_capacity(topic.len() + packet_id_size + payload.len());
         packet.put(topic);
-        packet.put_u16_be(publish.packet_id);
+
+        if packet_id_present {
+            packet.put_u16_be(publish.packet_id);
+        }
+
         packet.put(payload);
 
         let flags = publish.qos << 1;

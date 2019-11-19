@@ -20,7 +20,7 @@ pub type FramedPackets = Framed<TcpStream, PacketsCodec>;
 
 impl Client {
     pub async fn new(broker: Arc<Mutex<Broker>>, connect: Connect, mut packets: FramedPackets) -> MQTTResult<(Self, ClientId)> {
-        let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError(format!("missing clientId")))?;
+        let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
 
         //Create channels
         let (outgoing, incoming) = mpsc::unbounded_channel();
@@ -127,7 +127,7 @@ impl Stream for Client {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Poll::Ready(Some(v)) = self.incoming.poll_next_unpin(cx) {
-            return Poll::Ready(Some(Ok(Message::Broadcast(v.into()))));
+            return Poll::Ready(Some(Ok(Message::Broadcast(v))));
         }
 
         let result: Option<_> = futures::ready!(self.packets.poll_next_unpin(cx));

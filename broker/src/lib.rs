@@ -94,7 +94,7 @@ impl Broker {
 
             validate_subscribe(&topic)?;
 
-            self.message_bus.entry(topic.clone()).or_insert(channel());
+            self.message_bus.entry(topic.clone()).or_insert_with(channel);
 
             self.subscriptions
                 .entry(topic.clone())
@@ -132,7 +132,7 @@ impl Broker {
         let packet_id: PacketId = self
             .packet_counter
             .entry(topic.clone())
-            .or_insert(std::sync::atomic::AtomicU64::new(0))
+            .or_insert_with(|| std::sync::atomic::AtomicU64::new(0))
             .fetch_add(1, SeqCst);
 
         let application_message = ApplicationMessage {
@@ -153,14 +153,14 @@ impl Broker {
             .for_each(|(publisher, client_id)| {
                 info!("Publishing msg to {}", &publisher);
                 let application_message = application_message.clone();
-                let application_message_id = application_message.id.clone();
+                let application_message_id = application_message.id;
                 let topic = application_message.topic.clone();
 
                 match publisher.publish_msg(application_message.into()) {
                     Ok(()) => {
                         last_packet_per_topic
                             .entry(client_id.to_string())
-                            .or_insert(HashMap::new())
+                            .or_insert_with(HashMap::new)
                             .insert(topic, application_message_id);
                     }
                     Err(e) => {
