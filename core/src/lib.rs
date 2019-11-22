@@ -2,8 +2,6 @@
 
 #[macro_use]
 extern crate enum_primitive_derive;
-#[macro_use]
-extern crate log;
 
 use std::collections::HashSet;
 use std::convert::TryFrom;
@@ -13,6 +11,7 @@ use std::result;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use num_traits::ToPrimitive;
+use tracing::debug;
 
 mod mqtt_error;
 mod util;
@@ -244,7 +243,7 @@ impl From<ConnAck> for Packet {
         payload.put_u8(0b0000_0000);
         payload.put_u8(0b0000_0000);
 
-        info!("Responded with CONNACK");
+        debug!("creating CONNACK");
 
         Packet {
             packet_type: PacketType::CONNACK,
@@ -290,7 +289,7 @@ impl From<SubAck> for Packet {
         payload.put_u16_be(suback.packet_id);
         payload.extend(suback.sub_results);
 
-        info!("Responded with SUBACK: {:?}", payload);
+        debug!("creating SUBACK: {:?}", payload);
 
         Packet {
             packet_type: PacketType::SUBACK,
@@ -333,7 +332,7 @@ impl From<UnsubAck> for Packet {
         let mut payload = BytesMut::with_capacity(2);
         payload.put_u16_be(unsuback.packet_id);
 
-        info!("Responded with UNSUBACK: {:?}", payload);
+        debug!("creating UNSUBACK: {:?}", payload);
 
         Packet {
             packet_type: PacketType::UNSUBACK,
@@ -345,7 +344,7 @@ impl From<UnsubAck> for Packet {
 
 impl From<Publish> for Packet {
     fn from(publish: Publish) -> Self {
-        info!("Sending PUBLISH for packet id: {}", publish.packet_id);
+        debug!("creating PUBLISH for packet id: {}", publish.packet_id);
 
         let payload = publish.payload;
         let topic = util::encode_string(publish.topic);
@@ -373,7 +372,7 @@ impl From<Publish> for Packet {
 
 impl From<PubAck> for Packet {
     fn from(puback: PubAck) -> Self {
-        info!("Responded with PUBACK for packet id: {}", puback.packet_id);
+        debug!("creating PUBACK for packet id: {}", puback.packet_id);
 
         let mut payload = BytesMut::with_capacity(2);
         payload.put_u16_be(puback.packet_id);

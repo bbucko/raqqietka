@@ -10,11 +10,12 @@ use futures::{Poll, SinkExt, Stream, StreamExt};
 use tokio::codec::Framed;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
+use tracing::error;
 
 use broker::{Broker, ClientId};
 use core::{ConnAck, Connect, MQTTError, MQTTResult, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
 
-use crate::{Client, MQTTPublisher, Message, PacketsCodec};
+use crate::{Client, Message, MQTTPublisher, PacketsCodec};
 
 pub type FramedPackets = Framed<TcpStream, PacketsCodec>;
 

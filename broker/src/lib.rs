@@ -2,20 +2,19 @@
 #![feature(test)]
 #![feature(integer_atomics)]
 
-#[macro_use]
-extern crate log;
 #[cfg(test)]
 extern crate test;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
-use std::fmt::Formatter;
+use std::fmt::{Display, Error, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use bytes::Bytes;
+use tracing::{error, info, span, Level};
 
 use core::{MQTTResult, Packet, Publish, Publisher, Subscribe, Unsubscribe};
 
@@ -73,6 +72,12 @@ impl PartialEq for ApplicationMessage {
     }
 }
 
+impl Display for ApplicationMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        write!(f, "Message{{packet_id = {}, topic = {}}}", self.id, self.topic)
+    }
+}
+
 impl Broker {
     pub fn new() -> Self {
         info!("Broker has started");
@@ -81,7 +86,7 @@ impl Broker {
     }
 
     pub fn register(&mut self, client_id: &str, publisher: Box<dyn Publisher>) -> MQTTResult<()> {
-        info!("Client: {:?} has connected to broker", &client_id);
+        info!("client {:?} has connected to broker", &client_id);
 
         self.clients.insert(client_id.to_owned(), publisher);
         Ok(())
@@ -90,7 +95,7 @@ impl Broker {
     pub fn subscribe(&mut self, client_id: &str, subscribe: Subscribe) -> MQTTResult<Vec<u8>> {
         let mut result = vec![];
         for (topic, qos) in subscribe.topics {
-            info!("Client: {} has subscribed to topic: {} with qos {}", client_id, topic, qos);
+            info!("subscription to topic: {} with qos {}", topic, qos);
 
             validate_subscribe(&topic)?;
 
@@ -99,7 +104,7 @@ impl Broker {
             self.subscriptions
                 .entry(topic.clone())
                 .or_insert_with(HashSet::new)
-                .insert(client_id.to_string());
+                .insert(client_id.to_owned());
 
             result.push(qos);
         }
@@ -110,7 +115,7 @@ impl Broker {
     pub fn unsubscribe(&mut self, client_id: &str, unsubscribe: Unsubscribe) -> MQTTResult<()> {
         for topic in unsubscribe.topics.iter() {
             self.subscriptions.entry(topic.to_owned()).and_modify(|values| {
-                info!("Client: {} has unsubscribed from topic: {}", client_id, topic);
+                info!("unsubscription from topic: {}", topic);
 
                 values.remove(client_id);
             });
@@ -124,6 +129,9 @@ impl Broker {
     }
 
     pub fn publish(&mut self, publish: Publish) -> MQTTResult<()> {
+        let span = span!(Level::INFO, "broker");
+        let _guard = span.enter();
+
         let topic = publish.topic.clone();
 
         let subscriptions = &mut self.subscriptions;
@@ -151,7 +159,8 @@ impl Broker {
             .filter(|(publisher, _)| publisher.is_some())
             .map(|(publisher, client_id)| (publisher.unwrap(), client_id))
             .for_each(|(publisher, client_id)| {
-                info!("Publishing msg to {}", &publisher);
+                info!("publishing message {} to {}", &application_message, &publisher);
+
                 let application_message = application_message.clone();
                 let application_message_id = application_message.id;
                 let topic = application_message.topic.clone();

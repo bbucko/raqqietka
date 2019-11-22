@@ -53,8 +53,6 @@ impl Encoder for PacketsCodec {
     type Error = MQTTError;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dbg!(&item);
-
         let bytes: Bytes = item.into();
         dst.reserve(bytes.len());
         dst.put(bytes);
