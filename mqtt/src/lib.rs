@@ -2,15 +2,16 @@
 
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::SystemTime;
 
+use futures::prelude::*;
 use num_traits;
-use tokio::sync::{mpsc, Mutex};
+use tokio::codec::FramedWrite;
+use tokio::io::AsyncWrite;
+use tokio::sync::mpsc;
+use tracing::info;
 
-use broker::{Broker, ClientId};
-use client::FramedPackets;
+use broker::ClientId;
 use core::{MQTTError, MQTTResult, Packet, Publisher};
 
 mod client;
@@ -23,41 +24,73 @@ pub type Rx = mpsc::UnboundedReceiver<Packet>;
 pub struct PacketsCodec {}
 
 #[derive(Debug)]
-pub enum Message {
-    Broadcast(Packet),
-    Received(Packet),
-}
-
-#[derive(Debug)]
 pub struct Client {
-    pub client_id: ClientId,
-    addr: SocketAddr,
+    pub id: ClientId,
     disconnected: bool,
-    packets: FramedPackets,
-    incoming: Rx,
-    broker: Arc<Mutex<Broker>>,
     last_received_packet: SystemTime,
 }
 
-#[derive(Debug)]
-pub struct MQTTPublisher {
+#[derive(Debug, Clone)]
+pub struct TxPublisher {
     client_id: ClientId,
     tx: Tx,
 }
 
-impl MQTTPublisher {
+impl TxPublisher {
     pub fn new(client_id: ClientId, tx: Tx) -> Self {
-        MQTTPublisher { tx, client_id }
+        Self { tx, client_id }
     }
 }
 
-impl Publisher for MQTTPublisher {
-    fn publish_msg(&self, packet: Packet) -> MQTTResult<()> {
+impl Publisher for TxPublisher {
+    fn send(&self, packet: Packet) -> MQTTResult<()> {
         self.tx.clone().try_send(packet).map_err(|e| MQTTError::ServerError(e.to_string()))
     }
 }
 
-impl Display for MQTTPublisher {
+#[derive(Debug)]
+pub struct RxPublisher {
+    client_id: ClientId,
+    rx: Rx,
+}
+
+impl Display for TxPublisher {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Client{{client_id = {}}}", self.client_id)
+    }
+}
+
+impl RxPublisher {
+    pub fn new(client_id: ClientId, rx: Rx) -> Self {
+        Self { rx, client_id }
+    }
+}
+
+impl RxPublisher {
+    pub async fn forward_to<W>(mut self, write: W)
+    where
+        W: AsyncWrite + Unpin,
+        FramedWrite<W, PacketsCodec>: Sink<Packet>,
+        <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
+    {
+        let mut lines = FramedWrite::new(write, PacketsCodec::new());
+
+        while let Some(msg) = self.rx.next().await {
+            match lines.send(msg).await {
+                Ok(_) => {}
+                Err(error) => {
+                    info!(%error, "error sending to client");
+                    return;
+                }
+            }
+        }
+
+        // The client has disconnected, we can stop forwarding.
+        info!("client disconnected");
+    }
+}
+
+impl Display for RxPublisher {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Client{{client_id = {}}}", self.client_id)
     }

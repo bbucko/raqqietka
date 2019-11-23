@@ -5,10 +5,12 @@ authors = ["Blazej Bucko <blazej.bucko@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-tracing = "0.1"
-tracing-subscriber = "0.2.0-alpha"
 bytes = "0.4"
 tokio = "0.2.0-alpha"
+tracing = "0.1"
+tracing-subscriber = "0.2.0-alpha"
+tracing-futures = { version = "0.1", features = ["tokio-alpha", "std-future"]}
+
 
 mqtt = { path = "../mqtt" }
 core = { path = "../core" }

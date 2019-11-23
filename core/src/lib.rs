@@ -23,7 +23,7 @@ pub type Topic = String;
 pub type MQTTResult<T> = result::Result<T, MQTTError>;
 
 pub trait Publisher: Send + Debug + Display {
-    fn publish_msg(&self, packet: Packet) -> MQTTResult<()>;
+    fn send(&self, packet: Packet) -> MQTTResult<()>;
 }
 
 #[derive(Debug, PartialEq)]
@@ -34,7 +34,7 @@ pub enum MQTTError {
 }
 
 //Should be in mqtt
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Packet {
     pub packet_type: PacketType,
     pub flags: u8,
@@ -124,6 +124,9 @@ pub struct PubAck {
 
 #[derive(Debug, Default)]
 pub struct PingResp {}
+
+#[derive(Debug, Default)]
+pub struct Disconnect {}
 
 impl Packet {
     fn type_and_flags(packet_type: &PacketType, flags: u8) -> u8 {
@@ -234,6 +237,18 @@ impl TryFrom<Packet> for Connect {
             will,
             clean_session,
         })
+    }
+}
+
+impl From<Disconnect> for Packet {
+    fn from(_: Disconnect) -> Self {
+        debug!("creating DISCONNECT");
+
+        Packet {
+            packet_type: PacketType::DISCONNECT,
+            flags: 0,
+            payload: None,
+        }
     }
 }
 

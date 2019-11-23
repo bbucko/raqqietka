@@ -1,17 +1,29 @@
 use bytes::Bytes;
+use futures::executor::block_on;
+use tokio::sync::mpsc;
 
 use broker::Broker;
 use core::{Connect, Publish, Subscribe};
-use futures::executor::block_on;
-use mqtt::{MQTTPublisher, Rx};
-use tokio::sync::mpsc;
+use mqtt::{Rx, TxPublisher};
 
 #[test]
 fn test_register() {
-    let (tx, _) = mpsc::unbounded_channel();
+    let (tx, _rx) = mpsc::unbounded_channel();
     let mut broker = Broker::new();
     let client_id = "client_id".to_string();
-    let publisher = MQTTPublisher::new(client_id.clone(), tx);
+    let publisher = TxPublisher::new(client_id.clone(), tx);
+    let result = broker.register(&client_id, Box::new(publisher));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_register_with_existing_client() {
+    //FIXME
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut broker = Broker::new();
+    let client_id = "client_id".to_string();
+    let publisher = TxPublisher::new(client_id.clone(), tx);
     let result = broker.register(&client_id, Box::new(publisher));
 
     assert!(result.is_ok());
@@ -151,12 +163,13 @@ fn register_client(broker: &mut Broker, client_id: &str) -> Rx {
         will: None,
         clean_session: false,
     };
-    let (tx, rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::unbounded_channel();
     let client_id = &connect.client_id.unwrap();
 
-    let publisher = MQTTPublisher::new(client_id.clone(), tx);
+    let publisher = TxPublisher::new(client_id.clone(), tx);
 
     assert!(broker.register(client_id, Box::new(publisher)).is_ok());
+    assert_eq!(block_on(rx.recv()).unwrap().packet_type, core::PacketType::CONNACK);
 
     rx
 }

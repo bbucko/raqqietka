@@ -14,7 +14,8 @@ use std::sync::atomic::Ordering::SeqCst;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use bytes::Bytes;
-use tracing::{error, info, span, Level};
+use tracing::error;
+use tracing::info;
 
 use core::{MQTTResult, Packet, Publish, Publisher, Subscribe, Unsubscribe};
 
@@ -40,6 +41,7 @@ struct ApplicationMessage {
     id: PacketId,
     payload: Bytes,
     topic: Topic,
+    qos: u8,
 }
 
 impl From<ApplicationMessage> for Publish {
@@ -47,7 +49,7 @@ impl From<ApplicationMessage> for Publish {
         Publish {
             packet_id: application_message.id as u16,
             topic: application_message.topic,
-            qos: 0,
+            qos: application_message.qos,
             payload: application_message.payload,
         }
     }
@@ -80,15 +82,21 @@ impl Display for ApplicationMessage {
 
 impl Broker {
     pub fn new() -> Self {
-        info!("Broker has started");
-
         Broker::default()
     }
 
     pub fn register(&mut self, client_id: &str, publisher: Box<dyn Publisher>) -> MQTTResult<()> {
         info!("client {:?} has connected to broker", &client_id);
 
-        self.clients.insert(client_id.to_owned(), publisher);
+        publisher.send(core::ConnAck::default().into())?;
+
+        if let Some(old_publisher) = self.clients.insert(client_id.to_owned(), publisher) {
+            match old_publisher.send(core::Disconnect::default().into()) {
+                Ok(_) => info!("disconnected previous client"),
+                Err(error) => error!(%error, "error while disconnecting existing client"),
+            }
+        }
+
         Ok(())
     }
 
@@ -129,9 +137,6 @@ impl Broker {
     }
 
     pub fn publish(&mut self, publish: Publish) -> MQTTResult<()> {
-        let span = span!(Level::INFO, "broker");
-        let _guard = span.enter();
-
         let topic = publish.topic.clone();
 
         let subscriptions = &mut self.subscriptions;
@@ -147,9 +152,8 @@ impl Broker {
             id: packet_id,
             payload: publish.payload,
             topic: topic.clone(),
+            qos: publish.qos,
         };
-
-        self.message_bus.get(&topic).map(|(tx, _)| tx.send(application_message.clone()));
 
         subscriptions
             .iter()
@@ -165,7 +169,7 @@ impl Broker {
                 let application_message_id = application_message.id;
                 let topic = application_message.topic.clone();
 
-                match publisher.publish_msg(application_message.into()) {
+                match publisher.send(application_message.into()) {
                     Ok(()) => {
                         last_packet_per_topic
                             .entry(client_id.to_string())
@@ -173,7 +177,7 @@ impl Broker {
                             .insert(topic, application_message_id);
                     }
                     Err(e) => {
-                        error!("Error ({}) occurred while publishing message to {:?}", e.to_string(), publisher);
+                        error!(%e, "occurred while publishing message to {:?}", publisher);
                     }
                 };
             });
@@ -182,7 +186,7 @@ impl Broker {
     }
 
     pub fn acknowledge(&mut self, packet_id: u16) -> MQTTResult<()> {
-        info!("Acknowledging packet: {}", packet_id);
+        info!("acknowledging packet: {}", packet_id);
 
         Ok(())
     }
@@ -245,7 +249,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use core::{Connect, PacketType, Publish, Subscribe};
-    use mqtt::{MQTTPublisher, Rx, Tx};
+    use mqtt::{Rx, Tx, TxPublisher};
 
     use super::*;
 
@@ -392,9 +396,9 @@ mod tests {
     fn test_publish_through_trait(b: &mut test::Bencher) {
         let (tx, _) = mpsc::unbounded_channel();
         let mut map: HashMap<String, Box<dyn Publisher>> = HashMap::new();
-        map.insert("abc".to_string(), Box::new(MQTTPublisher::new("abc".to_string(), tx)));
+        map.insert("abc".to_string(), Box::new(TxPublisher::new("abc".to_string(), tx)));
 
-        b.iter(|| map.get_mut("abc").unwrap().publish_msg(create_packet()));
+        b.iter(|| map.get_mut("abc").unwrap().send(create_packet()));
     }
 
     fn simple_topics() -> Vec<&'static str> {
@@ -416,9 +420,11 @@ mod tests {
             will: None,
             clean_session: false,
         };
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
 
-        let _ = broker.register(&connect.client_id.unwrap(), Box::new(MQTTPublisher::new(client_id.clone().to_string(), tx)));
+        let _ = broker.register(&connect.client_id.unwrap(), Box::new(TxPublisher::new(client_id.clone().to_string(), tx)));
+        assert_eq!(block_on(rx.recv()).unwrap().packet_type, core::PacketType::CONNACK);
+
         rx
     }
 
