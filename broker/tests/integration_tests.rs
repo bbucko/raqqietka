@@ -38,7 +38,7 @@ fn test_register_with_existing_client() {
 }
 
 #[test]
-fn test_broker_publish_with_plain_subscription() {
+fn test_broker_qos0_publish_with_plain_subscription() {
     let mut broker = Broker::new();
     let client_id = "client_id";
     let mut rx = register_client(&mut broker, client_id);
@@ -59,6 +59,58 @@ fn test_broker_publish_with_plain_subscription() {
     assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x06/topictest")));
     assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\r/second/topictest")));
     assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0c/third/topictest")));
+    assert!(block_on(rx.recv()).is_none());
+}
+
+#[test]
+fn test_broker_qos1_publish_with_plain_subscription() {
+    let mut broker = Broker::new();
+    let client_id = "client_id";
+    let mut rx = register_client(&mut broker, client_id);
+    subscribe_client(&mut broker, client_id, &["/topic", "/second/topic", "/third/topic"]);
+
+    for topic in vec!["/topic", "/second/topic", "/third/topic"] {
+        let publish = Publish {
+            packet_id: 1,
+            topic: topic.to_owned(),
+            qos: 1,
+            payload: Bytes::from("test"),
+        };
+        assert!(broker.publish(publish).is_ok(), "Publish failed for topic: {}", topic);
+    }
+
+    rx.close();
+
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x06/topic\0\0test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\r/second/topic\0\0test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x0c/third/topic\0\0test")));
+    assert!(block_on(rx.recv()).is_none());
+}
+
+#[test]
+fn test_broker_qos1_multiple_publish_with_plain_subscription() {
+    let mut broker = Broker::new();
+    let client_id = "client_id";
+    let topic = "/topic".to_string();
+    let mut rx = register_client(&mut broker, client_id);
+    subscribe_client(&mut broker, client_id, &["/topic"]);
+
+    for packet_id in 0..3 {
+        let publish = Publish {
+            packet_id,
+            topic: topic.clone(),
+            qos: 1,
+            payload: Bytes::from("test"),
+        };
+        assert!(broker.publish(publish).is_ok(), "Publish failed for topic: {}", topic);
+    }
+
+    rx.close();
+
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x06/topic\0\x00test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x06/topic\0\x01test")));
+    assert_eq!(block_on(rx.recv()).unwrap().payload, Some(Bytes::from("\0\x06/topic\0\x02test")));
+
     assert!(block_on(rx.recv()).is_none());
 }
 
