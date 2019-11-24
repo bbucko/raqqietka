@@ -52,6 +52,10 @@ pub fn check_flag(flags: u8, position: usize) -> bool {
     (flags >> position) & 1u8 == 1u8
 }
 
+pub fn take_qos_from_flags(flags: u8) -> u8 {
+    (flags >> 3) & 3u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

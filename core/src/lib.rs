@@ -135,18 +135,18 @@ impl Packet {
     }
 }
 
-impl Into<Bytes> for Packet {
-    fn into(self) -> Bytes {
-        let packet_type = &self.packet_type;
-        let flags = self.flags;
+impl From<Packet> for Bytes {
+    fn from(packet: Packet) -> Self {
+        let packet_type = packet.packet_type;
+        let flags = packet.flags;
 
-        let payload = self.payload.map_or_else(Bytes::new, Bytes::into);
+        let payload = packet.payload.map_or_else(Bytes::new, Bytes::into);
         let packet_length = payload.len();
 
         let encoded_packet_length = util::encode_length(packet_length);
 
         let mut bytes = BytesMut::with_capacity(1 + encoded_packet_length.len() + packet_length);
-        bytes.put_u8(Packet::type_and_flags(packet_type, flags));
+        bytes.put_u8(Packet::type_and_flags(&packet_type, flags));
         bytes.put(encoded_packet_length);
         bytes.put(payload);
         bytes.freeze()
@@ -155,7 +155,13 @@ impl Into<Bytes> for Packet {
 
 impl fmt::Display for Packet {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Packet: ({:?}, {:#010b}, {:?})", self.packet_type, self.flags, self.payload)
+        write!(
+            f,
+            "{{ type = {:?}, flags = {:#010b}, payload.len = {} }}",
+            self.packet_type,
+            self.flags,
+            self.payload.as_ref().map_or(0, |payload| payload.len())
+        )
     }
 }
 
@@ -177,49 +183,48 @@ impl TryFrom<Packet> for Connect {
         let (_keep_alive, payload) = util::take_u18(&payload)?;
 
         let (client_id, mut payload) = util::take_string(&payload)?;
+        let will_present = util::check_flag(flags, 2);
 
-        let will_flag = util::check_flag(flags, 2);
-        let will_retain = util::check_flag(flags, 5);
-        let will_qos: u8 = (flags >> 3) & 3u8;
+        let will = if will_present {
+            let retain = util::check_flag(flags, 5);
+            let qos = util::take_qos_from_flags(flags);
 
-        let will = if will_flag {
             let internal_payload = payload;
-
-            let (will_topic, internal_payload) = util::take_string(&internal_payload)?;
-            let (will_length, internal_payload) = util::take_u18(&internal_payload)?;
-            let (will_payload, internal_payload) = internal_payload.split_at(will_length as usize);
+            let (topic, internal_payload) = util::take_string(&internal_payload)?;
+            let (length, internal_payload) = util::take_u18(&internal_payload)?;
+            let (will_payload, internal_payload) = internal_payload.split_at(length as usize);
+            let message = Bytes::from(will_payload);
+            let will_result = Will { qos, retain, topic, message };
 
             payload = internal_payload;
 
-            Some(Will {
-                qos: will_qos,
-                retain: will_retain,
-                topic: will_topic,
-                message: Bytes::from(will_payload),
-            })
+            Some(will_result)
         } else {
-            if will_retain || will_qos != 0 {
-                return Err(format!("malformed will: retain: {}; qos: {}", will_retain, will_qos).into());
+            if util::check_flag(flags, 5) || util::take_qos_from_flags(flags) != 0 {
+                return Err(format!("malformed will").into());
             }
 
             None
         };
 
-        let username_flag = util::check_flag(flags, 7);
+        let username_present = util::check_flag(flags, 7);
 
-        let auth = if username_flag {
+        let auth = if username_present {
             let internal_payload = payload;
             let (username, internal_payload) = util::take_string(&internal_payload)?;
 
-            let password_flag = util::check_flag(flags, 6);
-            let password = if password_flag {
+            let password_present = util::check_flag(flags, 6);
+
+            let password = if password_present {
                 let (password_length, internal_payload) = util::take_u18(&internal_payload)?;
                 let (password, internal_payload) = internal_payload.split_at(password_length as usize);
 
                 payload = internal_payload;
+
                 Some(Bytes::from(password))
             } else {
                 payload = internal_payload;
+
                 None
             };
 
