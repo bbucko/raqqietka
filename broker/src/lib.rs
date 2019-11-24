@@ -14,8 +14,7 @@ use std::sync::atomic::Ordering::SeqCst;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use bytes::Bytes;
-use tracing::error;
-use tracing::info;
+use tracing::{error, info, info_span};
 
 use core::{MQTTResult, Packet, Publish, Publisher, Subscribe, Unsubscribe};
 
@@ -76,7 +75,7 @@ impl PartialEq for ApplicationMessage {
 
 impl Display for ApplicationMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "Message{{packet_id = {}, topic = {}}}", self.id, self.topic)
+        write!(f, "{{packet_id = {}, topic = {}}}", self.id, self.topic)
     }
 }
 
@@ -86,13 +85,18 @@ impl Broker {
     }
 
     pub fn register(&mut self, client_id: &str, publisher: Box<dyn Publisher>) -> MQTTResult<()> {
-        info!("client {:?} has connected to broker", &client_id);
+        let span = info_span!("mqtt", %client_id);
+        let _guard = span.enter();
+        info!("registered new client");
 
-        publisher.send(core::ConnAck::default().into())?;
+        let connack = core::ConnAck::default();
+        publisher.send(connack.into())?;
 
-        if let Some(old_publisher) = self.clients.insert(client_id.to_owned(), publisher) {
-            match old_publisher.send(core::Disconnect::default().into()) {
-                Ok(_) => info!("disconnected previous client"),
+        let previous_value = self.clients.insert(client_id.to_owned(), publisher);
+        if let Some(old_publisher) = previous_value {
+            let disconnect = core::Disconnect::default();
+            match old_publisher.send(disconnect.into()) {
+                Ok(_) => info!("session takeover"),
                 Err(error) => error!(%error, "error while disconnecting existing client"),
             }
         }
@@ -103,8 +107,6 @@ impl Broker {
     pub fn subscribe(&mut self, client_id: &str, subscribe: Subscribe) -> MQTTResult<Vec<u8>> {
         let mut result = vec![];
         for (topic, qos) in subscribe.topics {
-            info!("subscription to topic: {} with qos {}", topic, qos);
-
             validate_subscribe(&topic)?;
 
             self.message_bus.entry(topic.clone()).or_insert_with(channel);
@@ -113,6 +115,8 @@ impl Broker {
                 .entry(topic.clone())
                 .or_insert_with(HashSet::new)
                 .insert(client_id.to_owned());
+
+            info!(%topic, "subscribed to");
 
             result.push(qos);
         }
@@ -123,9 +127,8 @@ impl Broker {
     pub fn unsubscribe(&mut self, client_id: &str, unsubscribe: Unsubscribe) -> MQTTResult<()> {
         for topic in unsubscribe.topics.iter() {
             self.subscriptions.entry(topic.to_owned()).and_modify(|values| {
-                info!("unsubscription from topic: {}", topic);
-
                 values.remove(client_id);
+                info!(%topic, "unsubscribed from");
             });
         }
 
@@ -142,6 +145,7 @@ impl Broker {
         let subscriptions = &mut self.subscriptions;
         let last_packet_per_topic = &mut self.last_packet;
         let clients = &mut self.clients;
+
         let packet_id: PacketId = self
             .packet_counter
             .entry(topic.clone())
@@ -163,14 +167,13 @@ impl Broker {
             .filter(|(publisher, _)| publisher.is_some())
             .map(|(publisher, client_id)| (publisher.unwrap(), client_id))
             .for_each(|(publisher, client_id)| {
-                info!("publishing message {} to {}", &application_message, &publisher);
-
                 let application_message = application_message.clone();
-                let application_message_id = application_message.id;
-                let topic = application_message.topic.clone();
-
-                match publisher.send(application_message.into()) {
+                match publisher.send(application_message.clone().into()) {
                     Ok(()) => {
+                        info!(%application_message, %publisher, "published");
+
+                        let application_message_id = application_message.id;
+                        let topic = application_message.topic.clone();
                         last_packet_per_topic
                             .entry(client_id.to_string())
                             .or_insert_with(HashMap::new)
@@ -186,7 +189,7 @@ impl Broker {
     }
 
     pub fn acknowledge(&mut self, packet_id: u16) -> MQTTResult<()> {
-        info!("acknowledging packet: {}", packet_id);
+        info!(%packet_id, "acknowledged");
 
         Ok(())
     }
@@ -227,7 +230,10 @@ impl Broker {
     }
 
     pub fn disconnect(&mut self, client_id: ClientId) {
-        info!("Client: {:?} has disconnected from broker", client_id);
+        let span = info_span!("mqtt", %client_id);
+        let _guard = span.enter();
+
+        info!("disconnected");
 
         self.clients.remove(&client_id);
         self.subscriptions.iter_mut().for_each(|(_, clients)| {

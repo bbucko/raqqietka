@@ -12,10 +12,10 @@ use tracing::{debug, info, info_span, Level};
 use tracing_futures::Instrument;
 use tracing_subscriber::fmt;
 
-use broker::Broker;
-use core::Connect;
-use core::Publisher;
-use mqtt::Client;
+use broker::*;
+use core::*;
+use core::MQTTError::ClientError;
+use mqtt::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,39 +47,52 @@ async fn process(broker: Arc<Mutex<Broker>>, connection: TcpStream) -> Result<()
     debug!("accepted connection");
 
     let (read, write) = io::split(connection);
-    let mut packets = FramedRead::new(read, mqtt::PacketsCodec::default());
+    let mut packets = FramedRead::new(read, PacketsCodec::new());
+    let connect = first_packet(&mut packets).await?;
 
-    // Read the first packet from the `PacketsCodec` stream to get the CONNECT.
+    let (client, client_id, consumer, producer) = Client::new(connect).await?;
+    let span = info_span!("mqtt", client_id = %client_id);
+
+    {
+        let mut broker = broker.lock().await;
+        broker.register(client_id.as_str(), Box::new(consumer.clone()))?;
+    }
+
+    tokio::spawn(producer.forward_to(write).instrument(span.clone()));
+
+    while let Some(packet) = packets.next().await {
+        let processed_packet = client
+            .process_packet(broker.clone(), packet)
+            .instrument(span.clone())
+            .await?;
+
+        if let Some(response) = processed_packet {
+            consumer.send(response)?;
+        }
+    }
+
+    {
+        let mut broker = broker.lock().await;
+        broker.disconnect(client_id);
+    }
+
+
+    Ok(())
+}
+
+async fn first_packet<R: AsyncRead + Unpin>(packets: &mut FramedRead<R, PacketsCodec>) -> MQTTResult<Connect> {
+    //Read the first packet from the `PacketsCodec` stream to get the CONNECT.
     let connect: Connect = match packets.next().await {
         Some(Ok(connect)) => connect.try_into()?,
         Some(Err(error)) => {
             // We didn't get a CONNECT so we return early here.
             info!(%error, "failed to get parse CONNECT - client disconnected.");
-            return Ok(());
+            return Err(ClientError("invalid_connect".to_string()));
         }
         None => {
             info!("client disconnected before sending a CONNECT");
-            return Ok(());
+            return Err(ClientError("invalid_connect".to_string()));
         }
     };
-
-    let (client, tx_publisher, rx_publisher, client_id) = Client::new(connect).await?;
-
-    broker.lock().await.register(client_id.as_str(), Box::new(tx_publisher.clone()))?;
-
-    tokio::spawn(rx_publisher.forward_to(write).instrument(info_span!("mqtt", client_id = %client_id)));
-
-    while let Some(packet) = packets.next().await {
-        if let Some(response) = client
-            .process_packet(broker.clone(), packet)
-            .instrument(info_span!("mqtt", client_id = %client_id))
-            .await?
-        {
-            tx_publisher.send(response)?;
-        }
-    }
-
-    broker.lock().await.disconnect(client_id);
-
-    Ok(())
+    Ok(connect)
 }

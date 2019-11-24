@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use broker::ClientId;
-use core::{MQTTError, MQTTResult, Packet, Publisher};
+use core::{MQTTError, MQTTResult, Packet, PacketType, Publisher};
 
 mod client;
 mod codec;
@@ -50,7 +50,7 @@ impl Publisher for MessageConsumer {
 
 impl Display for MessageConsumer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Client{{client_id = {}}}", self.client_id)
+        write!(f, "{{client_id = {}}}", self.client_id)
     }
 }
 
@@ -73,11 +73,16 @@ impl MessageProducer {
             FramedWrite<W, PacketsCodec>: Sink<Packet>,
             <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
     {
-        let mut lines = FramedWrite::new(write, PacketsCodec::default());
+        let mut lines = FramedWrite::new(write, PacketsCodec::new());
 
         while let Some(msg) = self.rx.next().await {
+            let packet_type = msg.packet_type.clone();
             match lines.send(msg).await {
-                Ok(_) => {}
+                Ok(_) => {
+                    if packet_type == PacketType::DISCONNECT {
+                        return;
+                    }
+                }
                 Err(error) => {
                     info!(%error, "error sending to client");
                     return;
@@ -92,6 +97,6 @@ impl MessageProducer {
 
 impl Display for MessageProducer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Client{{client_id = {}}}", self.client_id)
+        write!(f, "{{client_id = {}}}", self.client_id)
     }
 }

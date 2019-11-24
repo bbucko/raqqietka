@@ -11,10 +11,10 @@ use tracing::error;
 use broker::{Broker, ClientId};
 use core::{Connect, MQTTError, MQTTResult, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
 
-use crate::{Client, MessageProducer, MessageConsumer};
+use crate::{Client, MessageConsumer, MessageProducer};
 
 impl Client {
-    pub async fn new(connect: Connect) -> MQTTResult<(Self, MessageConsumer, MessageProducer, ClientId)> {
+    pub async fn new(connect: Connect) -> MQTTResult<(Client, ClientId, MessageConsumer, MessageProducer)> {
         let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
 
         //Create channels
@@ -30,7 +30,7 @@ impl Client {
             last_received_packet: SystemTime::now(),
         };
 
-        Ok((client, tx_publisher, rx_publisher, client_id))
+        Ok((client, client_id, tx_publisher, rx_publisher))
     }
 
     pub async fn process_packet(self: &Self, broker: Arc<Mutex<Broker>>, result: Result<Packet, MQTTError>) -> MQTTResult<Option<Packet>> {
@@ -41,8 +41,8 @@ impl Client {
                         let subscribe: Subscribe = packet.try_into()?;
                         let packet_id = subscribe.packet_id;
 
-                        let mut broker = broker.lock().await;
-                        if let Ok(sub_results) = broker.subscribe(&self.id, subscribe) {
+                        let sub_result = broker.lock().await.subscribe(&self.id, subscribe);
+                        if let Ok(sub_results) = sub_result {
                             let response: Packet = SubAck { packet_id, sub_results }.into();
                             return Ok(Some(response));
                         }
@@ -50,43 +50,43 @@ impl Client {
                     PacketType::UNSUBSCRIBE => {
                         let unsubscribe: Unsubscribe = packet.try_into()?;
 
-                        let mut broker = broker.lock().await;
-                        let _unsub_result = broker.unsubscribe(&self.id, unsubscribe);
+                        let _unsub_result = broker.lock().await.unsubscribe(&self.id, unsubscribe);
                     }
                     PacketType::PUBLISH => {
                         let publish: Publish = packet.try_into()?;
                         let packet_id = publish.packet_id;
                         let qos = publish.qos;
 
-                        let mut broker = broker.lock().await;
-                        broker.validate(&publish)?;
+                        {
+                            let mut broker = broker.lock().await;
+                            broker.validate(&publish)?;
+                            broker.publish(publish)?;
+                        }
 
                         if qos == 1 {
                             let response: Packet = PubAck { packet_id }.into();
                             return Ok(Some(response));
                         } else if qos == 2 {
+                            //FIXME
                             //let response: Packet = PubAck { packet_id: publish.packet_id }.into();
                             //self.packets.send(response).await?;
                         }
-
-                        broker.publish(publish)?;
                     }
                     PacketType::PUBACK => {
                         let puback: PubAck = packet.try_into()?;
-
-                        let mut broker = broker.lock().await;
-                        broker.acknowledge(puback.packet_id)?;
+                        broker.lock().await.acknowledge(puback.packet_id)?;
                     }
                     PacketType::PINGREQ => {
+                        //FIXME implement connection timeout
                         let response: Packet = PingResp::default().into();
-
                         return Ok(Some(response));
                     }
                     PacketType::CONNECT => {
-                        error!("Disconnecting client (duplicated CONNECT): {}", self);
+                        error!("disconnected client (duplicated CONNECT)");
                         return Ok(None);
                     }
                     PacketType::DISCONNECT => {
+                        broker.lock().await.disconnect(self.id.clone());
                         return Ok(None);
                     }
                     packet_type => {
@@ -106,6 +106,6 @@ impl Client {
 
 impl fmt::Display for Client {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Client(clientId = {})", self.id)
+        write!(f, "{{clientId = {}}}", self.id)
     }
 }
