@@ -8,13 +8,13 @@ extern crate test;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
-use std::fmt::{Display, Error, Formatter};
+use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use bytes::Bytes;
-use tracing::{error, info, info_span};
+use tracing::{error, info};
 
 use core::{MQTTResult, Packet, Publish, Publisher, Subscribe, Unsubscribe};
 
@@ -74,8 +74,8 @@ impl PartialEq for ApplicationMessage {
 }
 
 impl Display for ApplicationMessage {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        write!(f, "{{packet_id = {}, topic = {}}}", self.id, self.topic)
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{{packet_id = {}, topic = {}, qos = {}}}", self.id, self.topic, self.qos)
     }
 }
 
@@ -85,21 +85,13 @@ impl Broker {
     }
 
     pub fn register(&mut self, client_id: &str, publisher: Box<dyn Publisher>) -> MQTTResult<()> {
-        let span = info_span!("mqtt", %client_id);
-        let _guard = span.enter();
         info!("registered new client");
 
-        let connack = core::ConnAck::default();
-        publisher.send(connack.into())?;
+        Broker::send_connack(publisher.as_ref())?;
 
-        let previous_value = self.clients.insert(client_id.to_owned(), publisher);
-        if let Some(old_publisher) = previous_value {
-            let disconnect = core::Disconnect::default();
-            match old_publisher.send(disconnect.into()) {
-                Ok(_) => info!("session takeover"),
-                Err(error) => error!(%error, "error while disconnecting existing client"),
-            }
-        }
+        self.clients
+            .insert(client_id.to_owned(), publisher)
+            .and_then(Broker::disconnect_if_session_exists);
 
         Ok(())
     }
@@ -173,7 +165,7 @@ impl Broker {
                         info!(%application_message, %publisher, "published");
 
                         let application_message_id = application_message.id;
-                        let topic = application_message.topic.clone();
+                        let topic = application_message.topic;
                         last_packet_per_topic
                             .entry(client_id.to_string())
                             .or_insert_with(HashMap::new)
@@ -230,9 +222,6 @@ impl Broker {
     }
 
     pub fn disconnect(&mut self, client_id: ClientId) {
-        let span = info_span!("mqtt", %client_id);
-        let _guard = span.enter();
-
         info!("disconnected");
 
         self.clients.remove(&client_id);
@@ -240,11 +229,26 @@ impl Broker {
             clients.remove(&client_id);
         });
     }
+
+    fn send_connack(publisher: &dyn Publisher) -> MQTTResult<()> {
+        let connack = core::ConnAck::default();
+        publisher.send(connack.into())
+    }
+
+    fn disconnect_if_session_exists(existing_client: Box<dyn Publisher>) -> Option<()> {
+        let disconnect = core::Disconnect::default();
+        let result = existing_client.send(disconnect.into());
+        match result {
+            Ok(_) => info!("session takeover"),
+            Err(error) => error!(%error, "error while disconnecting existing client"),
+        }
+        None
+    }
 }
 
 impl std::fmt::Debug for Broker {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Broker(clients#: {}, subscriptions#: {})", self.clients.len(), self.subscriptions.len())
+        write!(f, "Broker {{clients = {}, subscriptions = {}}}", self.clients.len(), self.subscriptions.len())
     }
 }
 
