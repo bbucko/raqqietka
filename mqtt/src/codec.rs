@@ -6,12 +6,6 @@ use core::{MQTTError, Packet, PacketType};
 use crate::num_traits::FromPrimitive;
 use crate::PacketsCodec;
 
-impl PacketsCodec {
-    pub fn new() -> PacketsCodec {
-        PacketsCodec::default()
-    }
-}
-
 impl Decoder for PacketsCodec {
     type Item = Packet;
     type Error = MQTTError;

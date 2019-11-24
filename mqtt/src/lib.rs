@@ -25,55 +25,55 @@ pub struct PacketsCodec {}
 
 #[derive(Debug)]
 pub struct Client {
-    pub id: ClientId,
+    id: ClientId,
     disconnected: bool,
     last_received_packet: SystemTime,
 }
 
 #[derive(Debug, Clone)]
-pub struct TxPublisher {
+pub struct MessageConsumer {
     client_id: ClientId,
     tx: Tx,
 }
 
-impl TxPublisher {
+impl MessageConsumer {
     pub fn new(client_id: ClientId, tx: Tx) -> Self {
-        Self { tx, client_id }
+        MessageConsumer { tx, client_id }
     }
 }
 
-impl Publisher for TxPublisher {
+impl Publisher for MessageConsumer {
     fn send(&self, packet: Packet) -> MQTTResult<()> {
         self.tx.clone().try_send(packet).map_err(|e| MQTTError::ServerError(e.to_string()))
     }
 }
 
-#[derive(Debug)]
-pub struct RxPublisher {
-    client_id: ClientId,
-    rx: Rx,
-}
-
-impl Display for TxPublisher {
+impl Display for MessageConsumer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Client{{client_id = {}}}", self.client_id)
     }
 }
 
-impl RxPublisher {
+#[derive(Debug)]
+pub struct MessageProducer {
+    client_id: ClientId,
+    rx: Rx,
+}
+
+impl MessageProducer {
     pub fn new(client_id: ClientId, rx: Rx) -> Self {
-        Self { rx, client_id }
+        MessageProducer { rx, client_id }
     }
 }
 
-impl RxPublisher {
+impl MessageProducer {
     pub async fn forward_to<W>(mut self, write: W)
-    where
-        W: AsyncWrite + Unpin,
-        FramedWrite<W, PacketsCodec>: Sink<Packet>,
-        <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
+        where
+            W: AsyncWrite + Unpin,
+            FramedWrite<W, PacketsCodec>: Sink<Packet>,
+            <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
     {
-        let mut lines = FramedWrite::new(write, PacketsCodec::new());
+        let mut lines = FramedWrite::new(write, PacketsCodec::default());
 
         while let Some(msg) = self.rx.next().await {
             match lines.send(msg).await {
@@ -90,7 +90,7 @@ impl RxPublisher {
     }
 }
 
-impl Display for RxPublisher {
+impl Display for MessageProducer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Client{{client_id = {}}}", self.client_id)
     }

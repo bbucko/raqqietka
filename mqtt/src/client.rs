@@ -11,18 +11,18 @@ use tracing::error;
 use broker::{Broker, ClientId};
 use core::{Connect, MQTTError, MQTTResult, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
 
-use crate::{Client, RxPublisher, TxPublisher};
+use crate::{Client, MessageProducer, MessageConsumer};
 
 impl Client {
-    pub async fn new(connect: Connect) -> MQTTResult<(Self, TxPublisher, RxPublisher, ClientId)> {
+    pub async fn new(connect: Connect) -> MQTTResult<(Self, MessageConsumer, MessageProducer, ClientId)> {
         let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
 
         //Create channels
         let (tx, rx) = mpsc::unbounded_channel();
 
         //Register client in the broker
-        let tx_publisher = TxPublisher::new(client_id.clone(), tx);
-        let rx_publisher = RxPublisher::new(client_id.clone(), rx);
+        let tx_publisher = MessageConsumer::new(client_id.clone(), tx);
+        let rx_publisher = MessageProducer::new(client_id.clone(), rx);
 
         let client = Client {
             id: client_id.clone(),

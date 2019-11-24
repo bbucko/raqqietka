@@ -15,7 +15,7 @@ use tracing_subscriber::fmt;
 use broker::Broker;
 use core::Connect;
 use core::Publisher;
-use mqtt::{Client, PacketsCodec};
+use mqtt::Client;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,7 +47,7 @@ async fn process(broker: Arc<Mutex<Broker>>, connection: TcpStream) -> Result<()
     debug!("accepted connection");
 
     let (read, write) = io::split(connection);
-    let mut packets = FramedRead::new(read, PacketsCodec::new());
+    let mut packets = FramedRead::new(read, mqtt::PacketsCodec::default());
 
     // Read the first packet from the `PacketsCodec` stream to get the CONNECT.
     let connect: Connect = match packets.next().await {

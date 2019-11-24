@@ -249,7 +249,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use core::{Connect, PacketType, Publish, Subscribe};
-    use mqtt::{Rx, Tx, TxPublisher};
+    use mqtt::{MessageConsumer, Rx, Tx};
 
     use super::*;
 
@@ -396,7 +396,7 @@ mod tests {
     fn test_publish_through_trait(b: &mut test::Bencher) {
         let (tx, _) = mpsc::unbounded_channel();
         let mut map: HashMap<String, Box<dyn Publisher>> = HashMap::new();
-        map.insert("abc".to_string(), Box::new(TxPublisher::new("abc".to_string(), tx)));
+        map.insert("abc".to_string(), Box::new(MessageConsumer::new("abc".to_string(), tx)));
 
         b.iter(|| map.get_mut("abc").unwrap().send(create_packet()));
     }
@@ -422,7 +422,7 @@ mod tests {
         };
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        let _ = broker.register(&connect.client_id.unwrap(), Box::new(TxPublisher::new(client_id.clone().to_string(), tx)));
+        let _ = broker.register(&connect.client_id.unwrap(), Box::new(MessageConsumer::new(client_id.clone().to_string(), tx)));
         assert_eq!(block_on(rx.recv()).unwrap().packet_type, core::PacketType::CONNACK);
 
         rx

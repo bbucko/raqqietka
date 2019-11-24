@@ -4,14 +4,14 @@ use tokio::sync::mpsc;
 
 use broker::Broker;
 use core::{Connect, Publish, Subscribe};
-use mqtt::{Rx, TxPublisher};
+use mqtt::{MessageConsumer, Rx};
 
 #[test]
 fn test_register() {
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut broker = Broker::new();
     let client_id = "client_id".to_string();
-    let publisher = TxPublisher::new(client_id.clone(), tx);
+    let publisher = MessageConsumer::new(client_id.clone(), tx);
     let result = broker.register(&client_id, Box::new(publisher));
 
     assert!(result.is_ok());
@@ -19,14 +19,22 @@ fn test_register() {
 
 #[test]
 fn test_register_with_existing_client() {
-    //FIXME
-    let (tx, _rx) = mpsc::unbounded_channel();
     let mut broker = Broker::new();
     let client_id = "client_id".to_string();
-    let publisher = TxPublisher::new(client_id.clone(), tx);
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let publisher = MessageConsumer::new(client_id.clone(), tx);
     let result = broker.register(&client_id, Box::new(publisher));
 
     assert!(result.is_ok());
+    assert_eq!(block_on(rx.recv()).unwrap().packet_type, core::PacketType::CONNACK);
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let publisher = MessageConsumer::new(client_id.clone(), tx);
+    let result = broker.register(&client_id, Box::new(publisher));
+
+    assert!(result.is_ok());
+    assert_eq!(block_on(rx.recv()).unwrap().packet_type, core::PacketType::DISCONNECT);
 }
 
 #[test]
@@ -166,7 +174,7 @@ fn register_client(broker: &mut Broker, client_id: &str) -> Rx {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let client_id = &connect.client_id.unwrap();
 
-    let publisher = TxPublisher::new(client_id.clone(), tx);
+    let publisher = MessageConsumer::new(client_id.clone(), tx);
 
     assert!(broker.register(client_id, Box::new(publisher)).is_ok());
     assert_eq!(block_on(rx.recv()).unwrap().packet_type, core::PacketType::CONNACK);
