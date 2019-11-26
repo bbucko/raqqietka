@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 tracing = "0.1"
-bytes = "0.4"
+bytes = "0.5"
 
-num-traits = "^0.1"
+num-traits = "0.2"
 enum-primitive-derive = "0.1"

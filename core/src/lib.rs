@@ -193,7 +193,9 @@ impl TryFrom<Packet> for Connect {
             let (topic, internal_payload) = util::take_string(&internal_payload)?;
             let (length, internal_payload) = util::take_u18(&internal_payload)?;
             let (will_payload, internal_payload) = internal_payload.split_at(length as usize);
-            let message = Bytes::from(will_payload);
+
+            //FIXME
+            let message = Bytes::copy_from_slice(will_payload);
             let will_result = Will { qos, retain, topic, message };
 
             payload = internal_payload;
@@ -221,13 +223,13 @@ impl TryFrom<Packet> for Connect {
 
                 payload = internal_payload;
 
-                Some(Bytes::from(password))
+                //FIXME
+                Some(Bytes::copy_from_slice(password))
             } else {
                 payload = internal_payload;
 
                 None
             };
-
             Some(ConnectAuth { username, password })
         } else {
             None
@@ -306,7 +308,7 @@ impl TryFrom<Packet> for Subscribe {
 impl From<SubAck> for Packet {
     fn from(suback: SubAck) -> Self {
         let mut payload = BytesMut::with_capacity(2 + suback.sub_results.len());
-        payload.put_u16_be(suback.packet_id);
+        payload.put_u16(suback.packet_id);
         payload.extend(suback.sub_results);
 
         debug!("creating SUBACK: {:?}", payload);
@@ -350,7 +352,7 @@ impl TryFrom<Packet> for Unsubscribe {
 impl From<UnsubAck> for Packet {
     fn from(unsuback: UnsubAck) -> Self {
         let mut payload = BytesMut::with_capacity(2);
-        payload.put_u16_be(unsuback.packet_id);
+        payload.put_u16(unsuback.packet_id);
 
         debug!("creating UNSUBACK: {:?}", payload);
 
@@ -375,7 +377,7 @@ impl From<Publish> for Packet {
         packet.put(topic);
 
         if packet_id_present {
-            packet.put_u16_be(publish.packet_id);
+            packet.put_u16(publish.packet_id);
         }
 
         packet.put(payload);
@@ -395,7 +397,7 @@ impl From<PubAck> for Packet {
         debug!("creating PUBACK for packet id: {}", puback.packet_id);
 
         let mut payload = BytesMut::with_capacity(2);
-        payload.put_u16_be(puback.packet_id);
+        payload.put_u16(puback.packet_id);
 
         Packet {
             packet_type: PacketType::PUBACK,
@@ -431,7 +433,8 @@ impl TryFrom<Packet> for Publish {
         let (topic, payload) = util::take_string(&payload)?;
 
         let (packet_id, payload) = if qos == 0 { (0, payload) } else { util::take_u18(&payload)? };
-        let payload = Bytes::from(payload);
+        //FIXME
+        let payload = Bytes::copy_from_slice(payload);
 
         Ok(Publish {
             packet_id,

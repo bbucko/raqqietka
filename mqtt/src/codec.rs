@@ -1,10 +1,11 @@
 use bytes::{BufMut, Bytes, BytesMut};
-use tokio::codec::{Decoder, Encoder};
+use tokio_util::codec::{Decoder, Encoder};
 
 use core::{MQTTError, Packet, PacketType};
 
 use crate::num_traits::FromPrimitive;
 use crate::PacketsCodec;
+use bytes::buf::Buf;
 
 impl PacketsCodec {
     pub fn new() -> PacketsCodec {
@@ -91,30 +92,33 @@ mod tests {
 
     #[test]
     fn test_decode_length_one_byte() {
-        assert_eq!(Ok(Some((0, 0))), decode_length(&mut BytesMut::from(vec![0x00]), 0));
-        assert_eq!(Ok(Some((127, 0))), decode_length(&mut BytesMut::from(vec![0x7f]), 0));
+        assert_eq!(Ok(Some((0, 0))), decode_length(&mut BytesMut::from(&vec![0x00][..]), 0));
+        assert_eq!(Ok(Some((127, 0))), decode_length(&mut BytesMut::from(&vec![0x7f][..]), 0));
     }
 
     #[test]
     fn test_decode_length_two_bytes() {
-        assert_eq!(Ok(Some((128, 1))), decode_length(&mut BytesMut::from(vec![0x80, 0x01]), 0));
-        assert_eq!(Ok(Some((16383, 1))), decode_length(&mut BytesMut::from(vec![0xff, 0x7f]), 0));
+        assert_eq!(Ok(Some((128, 1))), decode_length(&mut BytesMut::from(&vec![0x80, 0x01][..]), 0));
+        assert_eq!(Ok(Some((16383, 1))), decode_length(&mut BytesMut::from(&vec![0xff, 0x7f][..]), 0));
     }
 
     #[test]
     fn test_decode_length_three_bytes() {
-        assert_eq!(Ok(Some((16384, 2))), decode_length(&mut BytesMut::from(vec![0x80, 0x80, 0x01]), 0));
-        assert_eq!(Ok(Some((2097151, 2))), decode_length(&mut BytesMut::from(vec![0xFF, 0xFF, 0x7F]), 0));
+        assert_eq!(Ok(Some((16384, 2))), decode_length(&mut BytesMut::from(&vec![0x80, 0x80, 0x01][..]), 0));
+        assert_eq!(Ok(Some((2097151, 2))), decode_length(&mut BytesMut::from(&vec![0xFF, 0xFF, 0x7F][..]), 0));
     }
 
     #[test]
     fn test_decode_length_four_bytes() {
-        assert_eq!(Ok(Some((2097152, 3))), decode_length(&mut BytesMut::from(vec![0x80, 0x80, 0x80, 0x01]), 0));
-        assert_eq!(Ok(Some((268435455, 3))), decode_length(&mut BytesMut::from(vec![0xFF, 0xFF, 0xFF, 0x7F]), 0));
+        assert_eq!(Ok(Some((2097152, 3))), decode_length(&mut BytesMut::from(&vec![0x80, 0x80, 0x80, 0x01][..]), 0));
+        assert_eq!(
+            Ok(Some((268435455, 3))),
+            decode_length(&mut BytesMut::from(&vec![0xFF, 0xFF, 0xFF, 0x7F][..]), 0)
+        );
     }
 
     #[test]
     fn test_decode_not_enough_bytes() {
-        assert_eq!(Ok(None), decode_length(&mut BytesMut::from(vec![0]), 1));
+        assert_eq!(Ok(None), decode_length(&mut BytesMut::from(&vec![0][..]), 1));
     }
 }

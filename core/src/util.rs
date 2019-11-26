@@ -1,6 +1,4 @@
-use bytes::BufMut;
-use bytes::Bytes;
-use bytes::BytesMut;
+use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::MQTTError;
 
@@ -26,9 +24,9 @@ pub fn encode_length(length: usize) -> Bytes {
 }
 
 pub fn encode_string(string: String) -> Bytes {
-    let mut encoded_string = BytesMut::new();
-    encoded_string.put_u16_be(string.len() as u16);
-    encoded_string.put(string);
+    let mut encoded_string = BytesMut::with_capacity(string.len());
+    encoded_string.put_u16(string.len() as u16);
+    encoded_string.put(string.as_bytes());
 
     encoded_string.freeze()
 }

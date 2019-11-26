@@ -399,7 +399,7 @@ mod tests {
         let mut map: HashMap<String, Tx> = HashMap::new();
         map.insert("abc".to_string(), tx);
 
-        b.iter(|| map.get("abc").unwrap().clone().try_send(create_packet()));
+        b.iter(|| map.get("abc").unwrap().clone().send(create_packet()));
     }
 
     #[bench]

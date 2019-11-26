@@ -6,9 +6,9 @@ use std::time::SystemTime;
 
 use futures::prelude::*;
 use num_traits;
-use tokio::codec::FramedWrite;
 use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
+use tokio_util::codec::FramedWrite;
 use tracing::info;
 
 use broker::ClientId;
@@ -44,7 +44,7 @@ impl MessageConsumer {
 
 impl Publisher for MessageConsumer {
     fn send(&self, packet: Packet) -> MQTTResult<()> {
-        self.tx.clone().try_send(packet).map_err(|e| MQTTError::ServerError(e.to_string()))
+        self.tx.clone().send(packet).map_err(|e| MQTTError::ServerError(e.to_string()))
     }
 }
 

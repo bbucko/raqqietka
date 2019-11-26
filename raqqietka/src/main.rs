@@ -1,13 +1,15 @@
 #![warn(rust_2018_idioms)]
 
 use std::convert::TryInto;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use tokio::codec::FramedRead;
+use futures_util::stream::StreamExt;
 use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 use tokio::sync::Mutex;
+use tokio_util::codec::FramedRead;
 use tracing::{debug, info, info_span, Level};
 use tracing_futures::Instrument;
 use tracing_subscriber::fmt;
@@ -22,10 +24,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = fmt::Subscriber::builder().with_max_level(Level::INFO).finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 
-    let bind_addr = "127.0.0.1:1883";
+    let bind_addr = "127.0.0.1:1883".parse::<SocketAddr>()?;
     let mut listener = TcpListener::bind(&bind_addr).await?;
 
-    info!(addr = bind_addr, "listening on");
+    info!(%bind_addr, "listening on");
 
     let broker = Arc::new(Mutex::new(Broker::new()));
 
