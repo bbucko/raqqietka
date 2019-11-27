@@ -68,10 +68,10 @@ impl MessageProducer {
 
 impl MessageProducer {
     pub async fn forward_to<W>(mut self, write: W)
-        where
-            W: AsyncWrite + Unpin,
-            FramedWrite<W, PacketsCodec>: Sink<Packet>,
-            <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
+    where
+        W: AsyncWrite + Unpin,
+        FramedWrite<W, PacketsCodec>: Sink<Packet>,
+        <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
     {
         let mut lines = FramedWrite::new(write, PacketsCodec::new());
 

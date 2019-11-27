@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 core = {path = "../core"}
-tracing = {version = "0.1", features = ["std"]}
+tracing = {version = "0.1", features = ["std"], default-features = false}
 bytes = "0.5"
 
 [dev-dependencies]

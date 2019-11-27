@@ -12,9 +12,9 @@ tokio-util = {version = "0.2", features = ["codec"]}
 
 futures-util = "0.3"
 
-tracing = {version = "0.1", features = ["std"]}
-tracing-subscriber = {version = "0.2.0-alpha", features = ["fmt", "ansi"]}
-tracing-futures = { version = "0.1", features = ["std-future"]}
+tracing = {version = "0.1", features = ["std"], default-features = false}
+tracing-subscriber = {version = "0.2.0-alpha", features = ["fmt", "ansi", "env-filter"], default-features = false}
+tracing-futures = { version = "0.1", features = ["std-future"], default-features = false}
 
 mqtt = { path = "../mqtt" }
 core = { path = "../core" }
