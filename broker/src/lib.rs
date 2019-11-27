@@ -1,9 +1,4 @@
 #![warn(rust_2018_idioms)]
-#![feature(test)]
-#![feature(integer_atomics)]
-
-#[cfg(test)]
-extern crate test;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -258,8 +253,8 @@ mod tests {
     use futures::executor::block_on;
     use tokio::sync::mpsc;
 
-    use core::{Connect, PacketType, Publish, Subscribe};
-    use mqtt::{MessageConsumer, Rx, Tx};
+    use core::{Connect, Publish, Subscribe};
+    use mqtt::{MessageConsumer, Rx};
 
     use super::*;
 
@@ -393,24 +388,6 @@ mod tests {
         assert!(block_on(rx.recv()).is_none());
     }
 
-    #[bench]
-    fn test_publish_through_direct(b: &mut test::Bencher) {
-        let (tx, _) = mpsc::unbounded_channel();
-        let mut map: HashMap<String, Tx> = HashMap::new();
-        map.insert("abc".to_string(), tx);
-
-        b.iter(|| map.get("abc").unwrap().clone().send(create_packet()));
-    }
-
-    #[bench]
-    fn test_publish_through_trait(b: &mut test::Bencher) {
-        let (tx, _) = mpsc::unbounded_channel();
-        let mut map: HashMap<String, Box<dyn Publisher>> = HashMap::new();
-        map.insert("abc".to_string(), Box::new(MessageConsumer::new("abc".to_string(), tx)));
-
-        b.iter(|| map.get_mut("abc").unwrap().send(create_packet()));
-    }
-
     fn simple_topics() -> Vec<&'static str> {
         vec!["/topic", "/second/topic", "/third/topic"]
     }
@@ -436,13 +413,5 @@ mod tests {
         assert_eq!(block_on(rx.recv()).unwrap().packet_type, core::PacketType::CONNACK);
 
         rx
-    }
-
-    fn create_packet() -> Packet {
-        Packet {
-            packet_type: PacketType::CONNECT,
-            flags: 0,
-            payload: Option::None,
-        }
     }
 }

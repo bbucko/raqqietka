@@ -5,7 +5,7 @@ authors = ["Blazej Bucko <blazej.bucko@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-tracing = "0.1"
+tracing = {version = "0.1", features = ["std"]}
 bytes = "0.5"
 num-traits = "0.2"
 

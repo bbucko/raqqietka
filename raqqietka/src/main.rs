@@ -21,8 +21,7 @@ use mqtt::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let subscriber = fmt::Subscriber::builder().with_max_level(Level::INFO).finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    init_logging();
 
     let bind_addr = "127.0.0.1:1883".parse::<SocketAddr>()?;
     let mut listener = TcpListener::bind(&bind_addr).await?;
@@ -42,6 +41,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+}
+
+fn init_logging() {
+    let subscriber = fmt::Subscriber::builder().with_max_level(Level::INFO).finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
 async fn process(broker: Arc<Mutex<Broker>>, connection: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
