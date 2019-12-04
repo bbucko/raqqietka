@@ -55,13 +55,13 @@ async fn process(broker: Arc<Mutex<Broker>>, connection: TcpStream) -> Result<()
     let mut packets = FramedRead::new(read, PacketsCodec::new());
     let connect = first_packet(&mut packets).await?;
 
-    let (client, client_id, consumer, producer) = Client::new(connect).await?;
+    let (client, client_id, will, consumer, producer) = Client::new(connect).await?;
     let span = info_span!("mqtt", %client_id);
 
     {
         let mut broker = broker.lock().instrument(span.clone()).await;
         let _guard = span.enter();
-        broker.register(client_id.as_str(), Box::new(consumer.clone()))?;
+        broker.register(client_id.as_str(), Box::new(consumer.clone()), will)?;
     }
 
     tokio::spawn(producer.forward_to(write).instrument(span.clone()));

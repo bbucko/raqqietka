@@ -11,13 +11,9 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use bytes::Bytes;
 use tracing::{error, info};
 
-use core::{MQTTResult, Packet, Publish, Publisher, Subscribe, Unsubscribe};
+use core::*;
 
 use crate::validator::{validate_publish, validate_subscribe};
-
-pub type ClientId = String;
-pub type PacketId = u64;
-pub type Topic = String;
 
 mod validator;
 
@@ -25,6 +21,7 @@ mod validator;
 pub struct Broker {
     clients: HashMap<ClientId, Box<dyn Publisher>>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
+    will_messages: HashMap<ClientId, ApplicationMessage>,
     message_bus: HashMap<Topic, (Sender<ApplicationMessage>, Receiver<ApplicationMessage>)>,
     packet_counter: HashMap<Topic, std::sync::atomic::AtomicU64>,
     last_packet: HashMap<ClientId, HashMap<Topic, PacketId>>,
@@ -74,12 +71,23 @@ impl Display for ApplicationMessage {
     }
 }
 
+impl From<Will> for ApplicationMessage {
+    fn from(will: Will) -> Self {
+        ApplicationMessage {
+            id: 1,
+            payload: will.message,
+            topic: will.topic,
+            qos: will.qos,
+        }
+    }
+}
+
 impl Broker {
     pub fn new() -> Self {
         Broker::default()
     }
 
-    pub fn register(&mut self, client_id: &str, publisher: Box<dyn Publisher>) -> MQTTResult<()> {
+    pub fn register(&mut self, client_id: &str, publisher: Box<dyn Publisher>, will_message: Option<Will>) -> MQTTResult<()> {
         info!("registered new client");
 
         Broker::send_connack(publisher.as_ref())?;
@@ -87,6 +95,13 @@ impl Broker {
         self.clients
             .insert(client_id.to_owned(), publisher)
             .and_then(Broker::disconnect_if_session_exists);
+
+        let existing_will_message = will_message
+            .map(|will_message| will_message.into())
+            .map(|application_message: ApplicationMessage| self.will_messages.insert(client_id.to_owned(), application_message))
+            .flatten();
+
+        assert!(existing_will_message.is_none());
 
         Ok(())
     }
@@ -127,50 +142,17 @@ impl Broker {
     }
 
     pub fn publish(&mut self, publish: Publish) -> MQTTResult<()> {
-        let topic = publish.topic.clone();
-
-        let subscriptions = &mut self.subscriptions;
-        let last_packet_per_topic = &mut self.last_packet;
-        let clients = &mut self.clients;
-
-        let packet_id: PacketId = self
+        let id = self
             .packet_counter
-            .entry(topic.clone())
+            .entry(publish.topic.clone())
             .or_insert_with(|| std::sync::atomic::AtomicU64::new(0))
             .fetch_add(1, SeqCst);
 
-        let application_message = ApplicationMessage {
-            id: packet_id,
-            payload: publish.payload,
-            topic: topic.clone(),
-            qos: publish.qos,
-        };
+        let payload = publish.payload;
+        let topic = publish.topic;
+        let qos = publish.qos;
 
-        subscriptions
-            .iter()
-            .filter(|(subscription, _)| Broker::filter_matches_topic(subscription, &topic))
-            .flat_map(|(_, client_ips)| client_ips)
-            .map(|client_id| (clients.get(client_id), client_id))
-            .filter(|(publisher, _)| publisher.is_some())
-            .map(|(publisher, client_id)| (publisher.unwrap(), client_id))
-            .for_each(|(publisher, client_id)| {
-                let application_message = application_message.clone();
-                match publisher.send(application_message.clone().into()) {
-                    Ok(()) => {
-                        info!(%application_message, %publisher, "published");
-
-                        let application_message_id = application_message.id;
-                        let topic = application_message.topic;
-                        last_packet_per_topic
-                            .entry(client_id.to_string())
-                            .or_insert_with(HashMap::new)
-                            .insert(topic, application_message_id);
-                    }
-                    Err(e) => {
-                        error!(%e, "occurred while publishing message to {:?}", publisher);
-                    }
-                };
-            });
+        self.publish_message(ApplicationMessage { id, payload, topic, qos });
 
         Ok(())
     }
@@ -219,6 +201,11 @@ impl Broker {
     pub fn disconnect(&mut self, client_id: ClientId) {
         info!("disconnected");
 
+        self.will_messages.remove(&client_id).map(|last_will| {
+            info!(topic = %last_will.topic, "publishing LWT");
+            self.publish_message(last_will);
+        });
+
         self.clients.remove(&client_id);
         self.subscriptions.iter_mut().for_each(|(_, clients)| {
             clients.remove(&client_id);
@@ -239,6 +226,37 @@ impl Broker {
         }
         None
     }
+
+    fn publish_message(&mut self, application_message: ApplicationMessage) {
+        let last_packet_per_topic = &mut self.last_packet;
+        let clients = &mut self.clients;
+
+        self.subscriptions
+            .iter()
+            .filter(|(subscription, _)| Broker::filter_matches_topic(subscription, &application_message.topic))
+            .flat_map(|(_, client_ips)| client_ips)
+            .map(|client_id| (clients.get(client_id), client_id))
+            .filter(|(publisher, _)| publisher.is_some())
+            .map(|(publisher, client_id)| (publisher.unwrap(), client_id))
+            .for_each(|(publisher, client_id)| {
+                let application_message = application_message.clone();
+                match publisher.send(application_message.clone().into()) {
+                    Ok(()) => {
+                        info!(%application_message, %publisher, "published");
+
+                        let application_message_id = application_message.id;
+                        let topic = application_message.topic;
+                        last_packet_per_topic
+                            .entry(client_id.to_string())
+                            .or_insert_with(HashMap::new)
+                            .insert(topic, application_message_id);
+                    }
+                    Err(e) => {
+                        error!(%e, "occurred while publishing message to {:?}", publisher);
+                    }
+                };
+            });
+    }
 }
 
 impl std::fmt::Debug for Broker {
@@ -253,7 +271,7 @@ mod tests {
     use futures::executor::block_on;
     use tokio::sync::mpsc;
 
-    use core::{Connect, Publish, Subscribe};
+    use core::*;
     use mqtt::{MessageConsumer, Rx};
 
     use super::*;
@@ -409,7 +427,11 @@ mod tests {
         };
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        let _ = broker.register(&connect.client_id.unwrap(), Box::new(MessageConsumer::new(client_id.clone().to_string(), tx)));
+        let _ = broker.register(
+            &connect.client_id.unwrap(),
+            Box::new(MessageConsumer::new(client_id.clone().to_string(), tx)),
+            None,
+        );
         assert_eq!(block_on(rx.recv()).unwrap().packet_type, core::PacketType::CONNACK);
 
         rx

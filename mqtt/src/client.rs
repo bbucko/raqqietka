@@ -8,13 +8,13 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tracing::error;
 
-use broker::{Broker, ClientId};
-use core::{Connect, MQTTError, MQTTResult, Packet, PacketType, PingResp, PubAck, Publish, SubAck, Subscribe, Unsubscribe};
+use broker::Broker;
+use core::*;
 
 use crate::{Client, MessageConsumer, MessageProducer};
 
 impl Client {
-    pub async fn new(connect: Connect) -> MQTTResult<(Client, ClientId, MessageConsumer, MessageProducer)> {
+    pub async fn new(connect: Connect) -> MQTTResult<(Client, ClientId, Option<Will>, MessageConsumer, MessageProducer)> {
         let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
 
         //Create channels
@@ -30,7 +30,7 @@ impl Client {
             last_received_packet: SystemTime::now(),
         };
 
-        Ok((client, client_id, tx_publisher, rx_publisher))
+        Ok((client, client_id, connect.will, tx_publisher, rx_publisher))
     }
 
     pub async fn process_packet(self: &Self, broker: Arc<Mutex<Broker>>, result: Result<Packet, MQTTError>) -> MQTTResult<Option<Packet>> {

@@ -1,11 +1,13 @@
 #![feature(test)]
 
-use core::{Packet, PacketType, Publisher};
-use mqtt::{MessageConsumer, Tx};
+extern crate test;
+
 use std::collections::HashMap;
+
 use tokio::sync::mpsc;
 
-extern crate test;
+use core::*;
+use mqtt::{MessageConsumer, Tx};
 
 #[bench]
 fn test_publish_through_direct(b: &mut test::Bencher) {

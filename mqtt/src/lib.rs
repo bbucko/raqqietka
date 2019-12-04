@@ -7,18 +7,16 @@ use std::time::SystemTime;
 use futures::prelude::*;
 use num_traits;
 use tokio::io::AsyncWrite;
-use tokio::sync::mpsc;
 use tokio_util::codec::FramedWrite;
 use tracing::info;
 
-use broker::ClientId;
-use core::{MQTTError, MQTTResult, Packet, PacketType, Publisher};
+use core::*;
 
 mod client;
 mod codec;
 
-pub type Tx = mpsc::UnboundedSender<Packet>;
-pub type Rx = mpsc::UnboundedReceiver<Packet>;
+pub type Tx = tokio::sync::mpsc::UnboundedSender<Packet>;
+pub type Rx = tokio::sync::mpsc::UnboundedReceiver<Packet>;
 
 #[derive(Debug, Default)]
 pub struct PacketsCodec {}

@@ -17,7 +17,7 @@ mod mqtt_error;
 mod util;
 
 pub type ClientId = String;
-pub type PacketId = u128;
+pub type PacketId = u64;
 pub type Topic = String;
 
 pub type MQTTResult<T> = result::Result<T, MQTTError>;
@@ -71,16 +71,16 @@ pub struct Connect {
 
 #[derive(Debug)]
 pub struct ConnectAuth {
-    username: String,
-    password: Option<Bytes>,
+    pub username: String,
+    pub password: Option<Bytes>,
 }
 
 #[derive(Debug)]
 pub struct Will {
-    qos: u8,
-    retain: bool,
-    topic: Topic,
-    message: Bytes,
+    pub qos: u8,
+    pub retain: bool,
+    pub topic: Topic,
+    pub message: Bytes,
 }
 
 #[derive(Debug, Default)]

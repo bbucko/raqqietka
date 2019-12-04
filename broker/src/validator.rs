@@ -1,4 +1,4 @@
-use core::{MQTTError, MQTTResult};
+use core::*;
 
 pub fn validate_publish(topic: &str) -> MQTTResult<()> {
     if topic.chars().all(|c| (char::is_alphanumeric(c) || c == '/') && c != '#' && c != '+') {
