@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
+use tokio::sync;
 use tracing::error;
 
 use broker::Broker;
@@ -33,7 +33,7 @@ impl Client {
         Ok((client, client_id, connect.will, tx_publisher, rx_publisher))
     }
 
-    pub async fn process_packet(self: &Self, broker: Arc<Mutex<Broker>>, result: Result<Packet, MQTTError>) -> MQTTResult<Option<Packet>> {
+    pub async fn process_packet(self: &Self, broker: Arc<sync::Mutex<Broker<MessageConsumer>>>, result: Result<Packet, MQTTError>) -> MQTTResult<Option<Packet>> {
         match result {
             Ok(packet) => {
                 match &packet.packet_type {

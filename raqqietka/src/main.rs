@@ -6,17 +6,17 @@ use std::sync::Arc;
 
 use futures_util::stream::StreamExt;
 use tokio::io;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net;
 use tokio::prelude::*;
-use tokio::sync::Mutex;
-use tokio_util::codec::FramedRead;
-use tracing::{debug, info, info_span, Level};
+use tokio::sync;
+use tokio_util::codec;
+use tracing::{debug, error, info, info_span, Level};
 use tracing_futures::Instrument;
 use tracing_subscriber::fmt;
 
 use broker::*;
-use core::MQTTError::ClientError;
 use core::*;
+use core::MQTTError::ClientError;
 use mqtt::*;
 
 #[tokio::main]
@@ -24,11 +24,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
 
     let bind_addr = "127.0.0.1:1883".parse::<SocketAddr>()?;
-    let mut listener = TcpListener::bind(&bind_addr).await?;
+    let mut listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
     info!(%bind_addr, "listening on");
 
-    let broker = Arc::new(Mutex::new(Broker::new()));
+    let broker = Arc::new(tokio::sync::Mutex::new(Broker::new()));
 
     loop {
         let (socket, addr) = listener.accept().await?;
@@ -48,11 +48,11 @@ fn init_logging() {
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
-async fn process(broker: Arc<Mutex<Broker>>, connection: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+async fn process(broker: Arc<sync::Mutex<Broker<MessageConsumer>>>, connection: net::TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     debug!("accepted connection");
 
     let (read, write) = io::split(connection);
-    let mut packets = FramedRead::new(read, PacketsCodec::new());
+    let mut packets = codec::FramedRead::new(read, PacketsCodec::new());
     let connect = first_packet(&mut packets).await?;
 
     let (client, client_id, will, consumer, producer) = Client::new(connect).await?;
@@ -61,7 +61,14 @@ async fn process(broker: Arc<Mutex<Broker>>, connection: TcpStream) -> Result<()
     {
         let mut broker = broker.lock().instrument(span.clone()).await;
         let _guard = span.enter();
-        broker.register(client_id.as_str(), Box::new(consumer.clone()), will)?;
+        if let Err(err) = broker.register(&client_id, consumer.clone(), will) {
+            error!(%err, "unable to register");
+            //Spawn producer_forwarder first
+            //consumer.send(core::Disconnect::default().into())?;
+            return Ok(());
+        } else {
+            consumer.send(core::ConnAck::default().into())?;
+        }
     }
 
     tokio::spawn(producer.forward_to(write).instrument(span.clone()));
@@ -83,7 +90,7 @@ async fn process(broker: Arc<Mutex<Broker>>, connection: TcpStream) -> Result<()
     Ok(())
 }
 
-async fn first_packet<R: AsyncRead + Unpin>(packets: &mut FramedRead<R, PacketsCodec>) -> MQTTResult<Connect> {
+async fn first_packet<R: AsyncRead + Unpin>(packets: &mut codec::FramedRead<R, PacketsCodec>) -> MQTTResult<Connect> {
     //Read the first packet from the `PacketsCodec` stream to get the CONNECT.
     let connect: Connect = match packets.next().await {
         Some(Ok(connect)) => connect.try_into()?,

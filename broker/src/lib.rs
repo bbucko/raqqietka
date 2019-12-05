@@ -17,9 +17,11 @@ use crate::validator::{validate_publish, validate_subscribe};
 
 mod validator;
 
-#[derive(Default)]
-pub struct Broker {
-    clients: HashMap<ClientId, Box<dyn Publisher>>,
+pub struct Broker<T>
+where
+    T: Publisher + Clone,
+{
+    clients: HashMap<ClientId, T>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
     will_messages: HashMap<ClientId, ApplicationMessage>,
     message_bus: HashMap<Topic, (Sender<ApplicationMessage>, Receiver<ApplicationMessage>)>,
@@ -82,18 +84,23 @@ impl From<Will> for ApplicationMessage {
     }
 }
 
-impl Broker {
+impl<T: Publisher + Clone> Broker<T> {
     pub fn new() -> Self {
-        Broker::default()
+        Broker {
+            clients: Default::default(),
+            subscriptions: Default::default(),
+            will_messages: Default::default(),
+            message_bus: Default::default(),
+            packet_counter: Default::default(),
+            last_packet: Default::default(),
+        }
     }
 
-    pub fn register(&mut self, client_id: &str, publisher: Box<dyn Publisher>, will_message: Option<Will>) -> MQTTResult<()> {
+    pub fn register(&mut self, client_id: &str, publisher: T, will_message: Option<Will>) -> MQTTResult<()> {
         info!("registered new client");
 
-        Broker::send_connack(publisher.as_ref())?;
-
         self.clients
-            .insert(client_id.to_owned(), publisher)
+            .insert(client_id.to_owned(), publisher.clone())
             .and_then(Broker::disconnect_if_session_exists);
 
         let existing_will_message = will_message
@@ -212,12 +219,7 @@ impl Broker {
         });
     }
 
-    fn send_connack(publisher: &dyn Publisher) -> MQTTResult<()> {
-        let connack = core::ConnAck::default();
-        publisher.send(connack.into())
-    }
-
-    fn disconnect_if_session_exists(existing_client: Box<dyn Publisher>) -> Option<()> {
+    fn disconnect_if_session_exists(existing_client: T) -> Option<()> {
         let disconnect = core::Disconnect::default();
         let result = existing_client.send(disconnect.into());
         match result {
@@ -233,7 +235,7 @@ impl Broker {
 
         self.subscriptions
             .iter()
-            .filter(|(subscription, _)| Broker::filter_matches_topic(subscription, &application_message.topic))
+            .filter(|(subscription, _)| Broker::<T>::filter_matches_topic(subscription, &application_message.topic))
             .flat_map(|(_, client_ips)| client_ips)
             .map(|client_id| (clients.get(client_id), client_id))
             .filter(|(publisher, _)| publisher.is_some())
@@ -259,7 +261,7 @@ impl Broker {
     }
 }
 
-impl std::fmt::Debug for Broker {
+impl<T: Publisher + Clone> std::fmt::Debug for Broker<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Broker {{clients = {}, subscriptions = {}}}", self.clients.len(), self.subscriptions.len())
     }
@@ -279,6 +281,7 @@ mod tests {
     #[test]
     fn test_broker_connect() {
         let mut broker = Broker::new();
+
         register_client(&mut broker, "client_id");
 
         assert!(broker.clients.contains_key(&"client_id".to_string()));
@@ -287,6 +290,7 @@ mod tests {
     #[test]
     fn test_broker_subscribe_with_incorrect_filter() {
         let mut broker = Broker::new();
+
         let client_id = "client_id";
         register_client(&mut broker, client_id);
 
@@ -308,17 +312,15 @@ mod tests {
                 topics: vec![(topic.to_string(), 1)].into_iter().collect(),
             };
 
-            assert!(
-                broker.subscribe(&client_id.to_string(), subscribe).is_err(),
-                "Subscription should fail for filter: {}",
-                topic
-            );
+            let result = broker.subscribe(&client_id.to_owned(), subscribe);
+            assert!(result.is_err(), "Subscription should fail for filter: {}", topic);
         }
     }
 
     #[test]
     fn test_broker_subscribe_with_plain_topics() {
         let mut broker = Broker::new();
+
         let client_id = "client_id";
         register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &simple_topics());
@@ -332,6 +334,7 @@ mod tests {
     #[test]
     fn test_broker_subscribe_with_wildcard_topics_single_level_last() {
         let mut broker = Broker::new();
+
         let client_id = "client_id";
         register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic/+"]);
@@ -345,6 +348,7 @@ mod tests {
     #[test]
     fn test_broker_subscribe_with_wildcard_topics_single_level_middle() {
         let mut broker = Broker::new();
+
         let client_id = "client_id";
         register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic/+/topic"]);
@@ -358,6 +362,7 @@ mod tests {
     #[test]
     fn test_broker_subscribe_with_wildcard_topics_multilevel() {
         let mut broker = Broker::new();
+
         let client_id = "client_id";
         register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic/#"]);
@@ -371,6 +376,7 @@ mod tests {
     #[test]
     fn test_broker_validate_topic_containing_wildcard() {
         let mut broker = Broker::new();
+
         let client_id = "client_id";
         register_client(&mut broker, client_id);
         subscribe_client(&mut broker, client_id, &["/topic"]);
@@ -389,6 +395,7 @@ mod tests {
     #[test]
     fn test_broker_publish_without_subscription() {
         let mut broker = Broker::new();
+
         let client_id = "client_id";
         let mut rx = register_client(&mut broker, client_id);
 
@@ -410,14 +417,14 @@ mod tests {
         vec!["/topic", "/second/topic", "/third/topic"]
     }
 
-    fn subscribe_client(broker: &mut Broker, client_id: &str, topics: &[&str]) {
+    fn subscribe_client(broker: &mut Broker<MessageConsumer>, client_id: &str, topics: &[&str]) {
         let topics = topics.iter().map(|str| (str.to_string(), 1)).collect();
         let subscribe = Subscribe { packet_id: 0, topics };
 
         assert!(broker.subscribe(&client_id.to_string(), subscribe).is_ok());
     }
 
-    fn register_client(broker: &mut Broker, client_id: &str) -> Rx {
+    fn register_client(broker: &mut Broker<MessageConsumer>, client_id: &str) -> Rx {
         let connect = Connect {
             version: 3,
             client_id: Some(client_id.clone().to_string()),
@@ -425,14 +432,11 @@ mod tests {
             will: None,
             clean_session: false,
         };
-        let (tx, mut rx) = mpsc::unbounded_channel();
 
-        let _ = broker.register(
-            &connect.client_id.unwrap(),
-            Box::new(MessageConsumer::new(client_id.clone().to_string(), tx)),
-            None,
-        );
-        assert_eq!(block_on(rx.recv()).unwrap().packet_type, core::PacketType::CONNACK);
+        let (tx, rx) = mpsc::unbounded_channel();
+        let message_consumer = MessageConsumer::new(client_id.clone().to_string(), tx);
+        let result = broker.register(&connect.client_id.unwrap(), message_consumer, None);
+        assert!(result.is_ok());
 
         rx
     }
