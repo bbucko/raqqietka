@@ -8,6 +8,7 @@ def on_connect(client, userdata, flags, rc):
     client.subscribe("topic", qos=1)
     client.publish(topic="topic", payload="test.py_qos0", qos=0)
     client.publish(topic="topic", payload="test.py_qos1", qos=1)
+#    client.disconnect()
 
 
 def on_disconnect(client, userdata, mid):

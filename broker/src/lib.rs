@@ -99,13 +99,15 @@ impl<T: Publisher + Clone> Broker<T> {
     pub fn register(&mut self, client_id: &str, publisher: T, will_message: Option<Will>) -> MQTTResult<()> {
         info!("registered new client");
 
-        self.clients
-            .insert(client_id.to_owned(), publisher.clone())
-            .and_then(Broker::disconnect_if_session_exists);
+        let client_id = client_id.to_owned();
+
+        if let Some(_) = self.clients.insert(client_id.clone(), publisher.clone()) {
+            self.disconnect_forcibly(client_id.clone());
+        };
 
         let existing_will_message = will_message
             .map(|will_message| will_message.into())
-            .map(|application_message: ApplicationMessage| self.will_messages.insert(client_id.to_owned(), application_message))
+            .map(|application_message: ApplicationMessage| self.will_messages.insert(client_id.clone(), application_message))
             .flatten();
 
         assert!(existing_will_message.is_none());
@@ -170,6 +172,23 @@ impl<T: Publisher + Clone> Broker<T> {
         Ok(())
     }
 
+    pub fn disconnect_forcibly(&mut self, client_id: ClientId) {
+        info!("disconnected forcibly");
+
+        self.will_messages.remove(&client_id).map(|last_will| {
+            info!(topic = %last_will.topic, "publishing LWT");
+            self.publish_message(last_will);
+        });
+
+        self.cleanup(client_id);
+    }
+
+    pub fn disconnect(&mut self, client_id: ClientId) {
+        info!("disconnected cleanly");
+
+        self.cleanup(client_id);
+    }
+
     fn filter_matches_topic(subscription: &str, topic: &str) -> bool {
         let mut sub_iter = subscription.chars();
         let mut topic_iter = topic.chars();
@@ -205,28 +224,11 @@ impl<T: Publisher + Clone> Broker<T> {
         }
     }
 
-    pub fn disconnect(&mut self, client_id: ClientId) {
-        info!("disconnected");
-
-        self.will_messages.remove(&client_id).map(|last_will| {
-            info!(topic = %last_will.topic, "publishing LWT");
-            self.publish_message(last_will);
-        });
-
-        self.clients.remove(&client_id);
+    fn cleanup(&mut self, client_id: ClientId) {
         self.subscriptions.iter_mut().for_each(|(_, clients)| {
             clients.remove(&client_id);
         });
-    }
-
-    fn disconnect_if_session_exists(existing_client: T) -> Option<()> {
-        let disconnect = core::Disconnect::default();
-        let result = existing_client.send(disconnect.into());
-        match result {
-            Ok(_) => info!("session takeover"),
-            Err(error) => error!(%error, "error while disconnecting existing client"),
-        }
-        None
+        self.clients.remove(&client_id);
     }
 
     fn publish_message(&mut self, application_message: ApplicationMessage) {
@@ -271,7 +273,6 @@ impl<T: Publisher + Clone> std::fmt::Debug for Broker<T> {
 mod tests {
     use bytes::Bytes;
     use futures::executor::block_on;
-    use tokio::sync::mpsc;
 
     use core::*;
     use mqtt::{MessageConsumer, Rx};
@@ -433,7 +434,7 @@ mod tests {
             clean_session: false,
         };
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let message_consumer = MessageConsumer::new(client_id.clone().to_string(), tx);
         let result = broker.register(&connect.client_id.unwrap(), message_consumer, None);
         assert!(result.is_ok());

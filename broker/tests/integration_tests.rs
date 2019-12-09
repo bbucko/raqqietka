@@ -40,7 +40,7 @@ fn test_register_with_existing_client() {
 }
 
 #[test]
-fn test_register_with_lwt() {
+fn test_forced_disconnect_with_lwt() {
     let mut broker = Broker::new();
 
     let client_id = "client_id";
@@ -61,13 +61,40 @@ fn test_register_with_lwt() {
 
     let _ = broker.subscribe(&receiver_client_id, subscribe_message(&vec!["will"]));
 
-    broker.disconnect(client_id.to_owned());
+    broker.disconnect_forcibly(client_id.to_owned());
 
     assert_eq!(block_on(rx_lwt.recv()).unwrap().packet_type, core::PacketType::PUBLISH);
 }
 
 #[test]
-fn test_register_with_lwt_and_existing_client() {
+fn test_clean_disconnect_with_lwt() {
+    let mut broker = Broker::new();
+
+    let client_id = "client_id";
+
+    let receiver_client_id = "receiver_client_id";
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let (tx_lwt, mut rx_lwt) = mpsc::unbounded_channel();
+
+    let message_consumer = MessageConsumer::new(client_id.to_owned(), tx);
+    let will_message = will_message();
+    let result = broker.register(&client_id, message_consumer, Some(will_message));
+    assert!(result.is_ok());
+
+    let message_consumer = MessageConsumer::new(receiver_client_id.to_owned(), tx_lwt);
+    let result = broker.register(&receiver_client_id, message_consumer, None);
+    assert!(result.is_ok());
+
+    let _ = broker.subscribe(&receiver_client_id, subscribe_message(&vec!["will"]));
+
+    broker.disconnect_forcibly(client_id.to_owned());
+
+    assert_eq!(block_on(rx_lwt.recv()).unwrap().packet_type, core::PacketType::PUBLISH);
+}
+
+#[test]
+fn test_forced_disconnect_with_lwt_and_existing_client() {
     //GIVEN
     let mut broker = Broker::new();
 
@@ -89,7 +116,7 @@ fn test_register_with_lwt_and_existing_client() {
     assert!(result.is_ok());
 
     //disconnect this client
-    broker.disconnect(client_id.to_owned());
+    broker.disconnect_forcibly(client_id.to_owned());
 
     assert_eq!(block_on(rx_lwt.recv()).unwrap().packet_type, core::PacketType::PUBLISH);
 

@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             let span = tracing::trace_span!("conn", ip = %addr.ip(), port = addr.port());
             if let Err(e) = process(broker, socket).instrument(span).await {
-                println!("an error occurred: {:?}", e);
+                error!(%e, "an error occurred");
             }
         });
     }
@@ -48,7 +48,7 @@ fn init_logging() {
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
-async fn process(broker: Arc<sync::Mutex<Broker<MessageConsumer>>>, connection: net::TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+async fn process(broker: Arc<sync::Mutex<Broker<MessageConsumer>>>, connection: net::TcpStream) -> Result<(), MQTTError> {
     debug!("accepted connection");
 
     let (read, write) = io::split(connection);
@@ -61,30 +61,20 @@ async fn process(broker: Arc<sync::Mutex<Broker<MessageConsumer>>>, connection: 
     {
         let mut broker = broker.lock().instrument(span.clone()).await;
         let _guard = span.enter();
-        if let Err(err) = broker.register(&client_id, consumer.clone(), will) {
-            error!(%err, "unable to register");
-            //Spawn producer_forwarder first
-            //consumer.send(core::Disconnect::default().into())?;
-            return Ok(());
-        } else {
-            consumer.send(core::ConnAck::default().into())?;
-        }
+
+        let _ = broker
+            .register(&client_id, consumer.clone(), will)
+            .map(|_| consumer.send(core::ConnAck::default().into()))?;
     }
 
     tokio::spawn(producer.forward_to(write).instrument(span.clone()));
 
     while let Some(packet) = packets.next().await {
         client
-            .process_packet(broker.clone(), packet)
+            .process(broker.clone(), packet)
             .instrument(span.clone())
             .await?
-            .and_then(|packet| consumer.send(packet).ok());
-    }
-
-    {
-        let mut broker = broker.lock().instrument(span.clone()).await;
-        let _guard = span.enter();
-        broker.disconnect(client_id);
+            .and_then(|response| consumer.send(response).ok());
     }
 
     Ok(())
@@ -92,17 +82,20 @@ async fn process(broker: Arc<sync::Mutex<Broker<MessageConsumer>>>, connection: 
 
 async fn first_packet<R: AsyncRead + Unpin>(packets: &mut codec::FramedRead<R, PacketsCodec>) -> MQTTResult<Connect> {
     //Read the first packet from the `PacketsCodec` stream to get the CONNECT.
-    let connect: Connect = match packets.next().await {
-        Some(Ok(connect)) => connect.try_into()?,
+    match packets.next().await {
+        Some(Ok(connect)) => {
+            //Successful connection
+            return Ok(connect.try_into()?);
+        }
         Some(Err(error)) => {
-            // We didn't get a CONNECT so we return early here.
-            info!(%error, "failed to get parse CONNECT - client disconnected.");
+            //Didn't get a CONNECT
+            error!(%error, "failed to get parse CONNECT - client disconnected.");
             return Err(ClientError("invalid_connect".to_string()));
         }
         None => {
-            info!("client disconnected before sending a CONNECT");
+            //Disconnected before sending a CONNECT
+            error!("client disconnected before sending a CONNECT");
             return Err(ClientError("invalid_connect".to_string()));
         }
     };
-    Ok(connect)
 }

@@ -247,18 +247,6 @@ impl TryFrom<Packet> for Connect {
     }
 }
 
-impl From<Disconnect> for Packet {
-    fn from(_: Disconnect) -> Self {
-        debug!("creating DISCONNECT");
-
-        Packet {
-            packet_type: PacketType::DISCONNECT,
-            flags: 0,
-            payload: None,
-        }
-    }
-}
-
 impl From<ConnAck> for Packet {
     fn from(_: ConnAck) -> Self {
         let mut payload = BytesMut::with_capacity(2);
