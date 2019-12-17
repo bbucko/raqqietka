@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         tokio::spawn(async move {
             let span = tracing::trace_span!("conn", ip = %addr.ip(), port = addr.port());
-            if let Err(e) = process(broker, socket).instrument(span).await {
+            if let Err(e) = process(broker.clone(), socket).instrument(span).await {
                 error!(%e, "an error occurred");
             }
         });
@@ -55,7 +55,7 @@ async fn process(broker: Arc<sync::Mutex<Broker<MessageConsumer>>>, connection: 
     let mut packets = codec::FramedRead::new(read, PacketsCodec::new());
     let connect = first_packet(&mut packets).await?;
 
-    let (client, client_id, will, consumer, producer) = Client::new(connect).await?;
+    let (client, client_id, will, consumer, producer) = Client::new(connect, broker.clone()).await?;
     let span = info_span!("mqtt", %client_id);
 
     {
@@ -71,10 +71,16 @@ async fn process(broker: Arc<sync::Mutex<Broker<MessageConsumer>>>, connection: 
 
     while let Some(packet) = packets.next().await {
         client
-            .process(broker.clone(), packet)
+            .process(packet)
             .instrument(span.clone())
             .await?
             .and_then(|response| consumer.send(response).ok());
+    }
+
+    {
+        let mut broker = broker.lock().instrument(span.clone()).await;
+        let _guard = span.enter();
+        broker.disconnect(client_id);
     }
 
     Ok(())

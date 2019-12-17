@@ -12,6 +12,7 @@ use std::result;
 use bytes::{BufMut, Bytes, BytesMut};
 use num_traits::ToPrimitive;
 use tracing::debug;
+use tracing::info;
 
 mod mqtt_error;
 mod util;
@@ -230,6 +231,7 @@ impl TryFrom<Packet> for Connect {
 
                 None
             };
+
             Some(ConnectAuth { username, password })
         } else {
             None

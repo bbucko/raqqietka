@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering::SeqCst;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use bytes::Bytes;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use core::*;
 
@@ -102,7 +102,7 @@ impl<T: Publisher + Clone> Broker<T> {
         let client_id = client_id.to_owned();
 
         if let Some(_) = self.clients.insert(client_id.clone(), publisher.clone()) {
-            self.disconnect_forcibly(client_id.clone());
+            self.cleanup(client_id.clone());
         };
 
         let existing_will_message = will_message
@@ -172,21 +172,25 @@ impl<T: Publisher + Clone> Broker<T> {
         Ok(())
     }
 
-    pub fn disconnect_forcibly(&mut self, client_id: ClientId) {
-        info!("disconnected forcibly");
+    pub fn disconnect(&mut self, client_id: ClientId) {
+        debug!("removing LWT");
+
+        self.will_messages.remove(&client_id);
+    }
+
+    pub fn cleanup(&mut self, client_id: ClientId) {
+        info!("client disconnected");
+
+        self.clients.remove(&client_id);
+
+        self.subscriptions.iter_mut().for_each(|(_, clients)| {
+            clients.remove(&client_id);
+        });
 
         self.will_messages.remove(&client_id).map(|last_will| {
             info!(topic = %last_will.topic, "publishing LWT");
-            self.publish_message(last_will);
+            self.publish_message(last_will)
         });
-
-        self.cleanup(client_id);
-    }
-
-    pub fn disconnect(&mut self, client_id: ClientId) {
-        info!("disconnected cleanly");
-
-        self.cleanup(client_id);
     }
 
     fn filter_matches_topic(subscription: &str, topic: &str) -> bool {
@@ -224,18 +228,12 @@ impl<T: Publisher + Clone> Broker<T> {
         }
     }
 
-    fn cleanup(&mut self, client_id: ClientId) {
-        self.subscriptions.iter_mut().for_each(|(_, clients)| {
-            clients.remove(&client_id);
-        });
-        self.clients.remove(&client_id);
-    }
-
     fn publish_message(&mut self, application_message: ApplicationMessage) {
         let last_packet_per_topic = &mut self.last_packet;
         let clients = &mut self.clients;
+        let subscriptions = &mut self.subscriptions;
 
-        self.subscriptions
+        subscriptions
             .iter()
             .filter(|(subscription, _)| Broker::<T>::filter_matches_topic(subscription, &application_message.topic))
             .flat_map(|(_, client_ips)| client_ips)

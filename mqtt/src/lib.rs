@@ -9,30 +9,33 @@ use std::time::SystemTime;
 use futures::prelude::*;
 use num_traits;
 use tokio::io::AsyncWrite;
+use tokio::sync;
 use tokio_util::codec::FramedWrite;
-use tracing::error;
-use tracing::info;
+use tracing::{debug, error};
 
 use broker::Broker;
 use core::*;
 
 mod codec;
 
-pub type Tx = tokio::sync::mpsc::UnboundedSender<Packet>;
-pub type Rx = tokio::sync::mpsc::UnboundedReceiver<Packet>;
+pub type Tx = sync::mpsc::UnboundedSender<Packet>;
+pub type Rx = sync::mpsc::UnboundedReceiver<Packet>;
 
 #[derive(Debug, Default)]
 pub struct PacketsCodec {}
 
 #[derive(Debug)]
 pub struct Client {
+    broker: Arc<sync::Mutex<Broker<MessageConsumer>>>,
     id: ClientId,
     disconnected: bool,
     last_received_packet: SystemTime,
 }
 
 impl Client {
-    pub async fn new(connect: Connect) -> MQTTResult<(Client, ClientId, Option<Will>, MessageConsumer, MessageProducer)> {
+    pub async fn new(
+        connect: Connect, broker: Arc<sync::Mutex<Broker<MessageConsumer>>>,
+    ) -> MQTTResult<(Client, ClientId, Option<Will>, MessageConsumer, MessageProducer)> {
         let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
 
         //Create channels
@@ -43,6 +46,7 @@ impl Client {
         let rx_publisher = MessageProducer::new(client_id.clone(), rx);
 
         let client = Client {
+            broker,
             id: client_id.clone(),
             disconnected: false,
             last_received_packet: SystemTime::now(),
@@ -51,7 +55,10 @@ impl Client {
         Ok((client, client_id, connect.will, tx_publisher, rx_publisher))
     }
 
-    pub async fn process(self: &Self, broker: Arc<tokio::sync::Mutex<Broker<MessageConsumer>>>, result: Result<Packet, MQTTError>) -> MQTTResult<Option<Packet>> {
+    pub async fn process(self: &Self, result: Result<Packet, MQTTError>) -> MQTTResult<Option<Packet>> {
+        let broker = &self.broker;
+        let client_id = self.id.clone();
+
         match result {
             Ok(packet) => {
                 match &packet.packet_type {
@@ -59,8 +66,8 @@ impl Client {
                         let subscribe: Subscribe = packet.try_into()?;
                         let packet_id = subscribe.packet_id;
 
-                        let sub_result = broker.lock().await.subscribe(&self.id, subscribe);
-                        if let Ok(sub_results) = sub_result {
+                        let result = broker.lock().await.subscribe(&self.id, subscribe);
+                        if let Ok(sub_results) = result {
                             let response: Packet = SubAck { packet_id, sub_results }.into();
                             return Ok(Some(response));
                         }
@@ -68,7 +75,7 @@ impl Client {
                     PacketType::UNSUBSCRIBE => {
                         let unsubscribe: Unsubscribe = packet.try_into()?;
 
-                        let _unsub_result = broker.lock().await.unsubscribe(&self.id, unsubscribe);
+                        let _result = broker.lock().await.unsubscribe(&self.id, unsubscribe);
                     }
                     PacketType::PUBLISH => {
                         let publish: Publish = packet.try_into()?;
@@ -103,7 +110,7 @@ impl Client {
                         error!("disconnected client (duplicated CONNECT)");
                     }
                     PacketType::DISCONNECT => {
-                        broker.lock().await.disconnect(self.id.clone());
+                        broker.lock().await.disconnect(client_id);
                     }
                     packet_type => {
                         panic!("Unknown packet type: {:?}", packet_type);
@@ -125,7 +132,6 @@ impl fmt::Display for Client {
         write!(f, "{{clientId = {}}}", self.id)
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct MessageConsumer {
@@ -178,14 +184,14 @@ impl MessageProducer {
                     //
                 }
                 Err(error) => {
-                    error!(%error, "error sending to client");
+                    error!(reason = %error, "error sending to client");
                     return;
                 }
             }
         }
 
         // The client has disconnected, we can stop forwarding.
-        info!("client disconnected");
+        debug!("client is no longer connected");
     }
 }
 
