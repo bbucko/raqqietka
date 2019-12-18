@@ -1,14 +1,10 @@
 #!/usr/bin/python3
 
 import paho.mqtt.client as mqtt
-
+import time
 
 def on_connect(client, userdata, flags, rc):
     print("CALLBACK: connected OK with result code " + str(rc))
-    client.subscribe("topic", qos=1)
-    client.publish(topic="topic", payload="test.py_qos0", qos=0)
-    client.publish(topic="topic", payload="test.py_qos1", qos=1)
-    client.disconnect()
 
 
 def on_disconnect(client, userdata, mid):
@@ -39,4 +35,9 @@ client.on_subscribe = on_subscribe
 client.on_log = on_log
 client.on_message = on_message
 client.connect("localhost", 1883, 60)
-client.loop_forever()
+client.loop_start()
+time.sleep(1)
+client.subscribe("topic", qos=1)
+client.publish(topic="topic", payload="test.py_qos0", qos=0).wait_for_publish()
+client.publish(topic="topic", payload="test.py_qos1", qos=1).wait_for_publish()
+client.disconnect()

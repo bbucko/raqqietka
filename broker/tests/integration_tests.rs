@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use bytes::Bytes;
 use futures::executor::block_on;
 use tokio::sync::mpsc;
@@ -26,7 +24,7 @@ fn test_register_with_existing_client() {
 
     let client_id = "client_id";
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, _rx) = mpsc::unbounded_channel();
     let publisher = MessageConsumer::new(client_id.to_owned(), tx);
     let result = broker.register(&client_id, publisher, None);
     assert!(result.is_ok());
@@ -51,7 +49,7 @@ fn test_forced_disconnect_with_lwt() {
     let (tx_lwt, mut rx_lwt) = mpsc::unbounded_channel();
 
     let message_consumer = MessageConsumer::new(client_id.to_owned(), tx);
-    let will_message = will_message();
+    let will_message = will_message().into();
     let result = broker.register(&client_id, message_consumer, Some(will_message));
     assert!(result.is_ok());
 
@@ -78,7 +76,7 @@ fn test_clean_disconnect_with_lwt() {
     let (tx_lwt, mut rx_lwt) = mpsc::unbounded_channel();
 
     let message_consumer = MessageConsumer::new(client_id.to_owned(), tx);
-    let will_message = will_message();
+    let will_message = will_message().into();
     let result = broker.register(&client_id, message_consumer, Some(will_message));
     assert!(result.is_ok());
 
@@ -112,7 +110,7 @@ fn test_forced_disconnect_with_lwt_and_existing_client() {
     //connect client with LWT
     let (tx, _rx) = mpsc::unbounded_channel();
     let message_consumer = MessageConsumer::new(client_id.to_owned(), tx);
-    let result = broker.register(&client_id, message_consumer, Some(will_message()));
+    let result = broker.register(&client_id, message_consumer, Some(will_message().into()));
     assert!(result.is_ok());
 
     //disconnect this client
@@ -124,7 +122,7 @@ fn test_forced_disconnect_with_lwt_and_existing_client() {
     //reconnect client with LWT
     let (tx, _rx) = mpsc::unbounded_channel();
     let message_consumer = MessageConsumer::new(client_id.to_owned(), tx);
-    let result = broker.register(&client_id, message_consumer, Some(will_message()));
+    let result = broker.register(&client_id, message_consumer, Some(will_message().into()));
 
     //THEN
     assert!(result.is_ok());
@@ -340,9 +338,8 @@ fn publish_message(packet_id: u16, topic: &str) -> Publish {
     }
 }
 
-fn subscribe_message(topics: &[&str]) -> Subscribe {
-    let topics: HashSet<(Topic, u8)> = topics.iter().map(|str| (str.to_string(), 1)).collect();
-    Subscribe { packet_id: 0, topics }
+fn subscribe_message(topics: &[&str]) -> Vec<(Topic, Qos)> {
+    topics.iter().map(|str| (str.to_string(), 1)).collect()
 }
 
 fn will_message() -> Will {

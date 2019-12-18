@@ -3,7 +3,6 @@
 #[macro_use]
 extern crate enum_primitive_derive;
 
-use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
@@ -11,8 +10,8 @@ use std::result;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use num_traits::ToPrimitive;
+use std::hash::{Hash, Hasher};
 use tracing::debug;
-use tracing::info;
 
 mod mqtt_error;
 mod util;
@@ -20,6 +19,7 @@ mod util;
 pub type ClientId = String;
 pub type PacketId = u64;
 pub type Topic = String;
+pub type Qos = u8;
 
 pub type MQTTResult<T> = result::Result<T, MQTTError>;
 
@@ -78,7 +78,7 @@ pub struct ConnectAuth {
 
 #[derive(Debug)]
 pub struct Will {
-    pub qos: u8,
+    pub qos: Qos,
     pub retain: bool,
     pub topic: Topic,
     pub message: Bytes,
@@ -90,19 +90,19 @@ pub struct ConnAck {}
 #[derive(Debug)]
 pub struct Subscribe {
     pub packet_id: u16,
-    pub topics: HashSet<(Topic, u8)>,
+    pub topics: Vec<(Topic, Qos)>,
 }
 
 #[derive(Debug)]
 pub struct SubAck {
     pub packet_id: u16,
-    pub sub_results: Vec<u8>,
+    pub sub_results: Vec<Qos>,
 }
 
 #[derive(Debug)]
 pub struct Unsubscribe {
     pub packet_id: u16,
-    pub topics: HashSet<Topic>,
+    pub topics: Vec<Topic>,
 }
 
 #[derive(Debug)]
@@ -274,7 +274,7 @@ impl TryFrom<Packet> for Subscribe {
         let payload = packet.payload.ok_or("malformed")?;
         let (packet_id, mut payload) = util::take_u18(&payload)?;
 
-        let mut topics = HashSet::new();
+        let mut topics = Vec::new();
 
         loop {
             if payload.is_empty() {
@@ -287,7 +287,7 @@ impl TryFrom<Packet> for Subscribe {
 
             let (&qos, topic_payload) = topic_payload.split_first().ok_or("malformed")?;
 
-            topics.insert((topic, qos));
+            topics.push((topic, qos));
             payload = topic_payload;
         }
 
@@ -320,8 +320,7 @@ impl TryFrom<Packet> for Unsubscribe {
         let payload = packet.payload.ok_or("malformed")?;
         let (packet_id, mut payload) = util::take_u18(&payload)?;
 
-        let mut topics = HashSet::new();
-
+        let mut topics = Vec::new();
         loop {
             if payload.is_empty() {
                 break;
@@ -331,7 +330,7 @@ impl TryFrom<Packet> for Unsubscribe {
 
             let (topic, topic_payload) = util::take_string(&topic_payload)?;
 
-            topics.insert(topic);
+            topics.push(topic);
             payload = topic_payload;
         }
 
@@ -441,6 +440,61 @@ impl From<PingResp> for Packet {
             packet_type: PacketType::PINGRES,
             flags: 0,
             payload: None,
+        }
+    }
+}
+
+#[derive(Eq, Debug, Clone)]
+pub struct ApplicationMessage {
+    pub id: PacketId,
+    pub payload: Bytes,
+    pub topic: Topic,
+    pub qos: u8,
+}
+
+impl From<ApplicationMessage> for Publish {
+    fn from(application_message: ApplicationMessage) -> Self {
+        Publish {
+            packet_id: application_message.id as u16,
+            topic: application_message.topic,
+            qos: application_message.qos,
+            payload: application_message.payload,
+        }
+    }
+}
+
+impl From<ApplicationMessage> for Packet {
+    fn from(application_message: ApplicationMessage) -> Self {
+        let publish: Publish = application_message.into();
+        publish.into()
+    }
+}
+
+impl Hash for ApplicationMessage {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl PartialEq for ApplicationMessage {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Display for ApplicationMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{{packet_id = {}, topic = {}, qos = {}}}", self.id, self.topic, self.qos)
+    }
+}
+
+impl From<Will> for ApplicationMessage {
+    fn from(will: Will) -> Self {
+        ApplicationMessage {
+            id: 1,
+            payload: will.message,
+            topic: will.topic,
+            qos: will.qos,
         }
     }
 }

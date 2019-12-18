@@ -3,12 +3,10 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
-use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
+use std::fmt::Formatter;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-use bytes::Bytes;
 use tracing::{debug, error, info};
 
 use core::*;
@@ -29,61 +27,6 @@ where
     last_packet: HashMap<ClientId, HashMap<Topic, PacketId>>,
 }
 
-#[derive(Eq, Debug, Clone)]
-struct ApplicationMessage {
-    id: PacketId,
-    payload: Bytes,
-    topic: Topic,
-    qos: u8,
-}
-
-impl From<ApplicationMessage> for Publish {
-    fn from(application_message: ApplicationMessage) -> Self {
-        Publish {
-            packet_id: application_message.id as u16,
-            topic: application_message.topic,
-            qos: application_message.qos,
-            payload: application_message.payload,
-        }
-    }
-}
-
-impl From<ApplicationMessage> for Packet {
-    fn from(application_message: ApplicationMessage) -> Self {
-        let publish: Publish = application_message.into();
-        publish.into()
-    }
-}
-
-impl Hash for ApplicationMessage {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl PartialEq for ApplicationMessage {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Display for ApplicationMessage {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{{packet_id = {}, topic = {}, qos = {}}}", self.id, self.topic, self.qos)
-    }
-}
-
-impl From<Will> for ApplicationMessage {
-    fn from(will: Will) -> Self {
-        ApplicationMessage {
-            id: 1,
-            payload: will.message,
-            topic: will.topic,
-            qos: will.qos,
-        }
-    }
-}
-
 impl<T: Publisher + Clone> Broker<T> {
     pub fn new() -> Self {
         Broker {
@@ -96,17 +39,16 @@ impl<T: Publisher + Clone> Broker<T> {
         }
     }
 
-    pub fn register(&mut self, client_id: &str, publisher: T, will_message: Option<Will>) -> MQTTResult<()> {
+    pub fn register(&mut self, client_id: &str, publisher: T, will_message: Option<ApplicationMessage>) -> MQTTResult<()> {
         info!("registered new client");
 
         let client_id = client_id.to_owned();
 
         if let Some(_) = self.clients.insert(client_id.clone(), publisher.clone()) {
-            self.cleanup(client_id.clone());
+            self.force_disconnect(client_id.clone());
         };
 
         let existing_will_message = will_message
-            .map(|will_message| will_message.into())
             .map(|application_message: ApplicationMessage| self.will_messages.insert(client_id.clone(), application_message))
             .flatten();
 
@@ -115,9 +57,9 @@ impl<T: Publisher + Clone> Broker<T> {
         Ok(())
     }
 
-    pub fn subscribe(&mut self, client_id: &str, subscribe: Subscribe) -> MQTTResult<Vec<u8>> {
+    pub fn subscribe(&mut self, client_id: &str, subscribe: Vec<(Topic, Qos)>) -> MQTTResult<Vec<Qos>> {
         let mut result = vec![];
-        for (topic, qos) in subscribe.topics {
+        for (topic, qos) in subscribe {
             validate_subscribe(&topic)?;
 
             self.message_bus.entry(topic.clone()).or_insert_with(channel);
@@ -135,8 +77,8 @@ impl<T: Publisher + Clone> Broker<T> {
         Ok(result)
     }
 
-    pub fn unsubscribe(&mut self, client_id: &str, unsubscribe: Unsubscribe) -> MQTTResult<()> {
-        for topic in unsubscribe.topics.iter() {
+    pub fn unsubscribe(&mut self, client_id: &str, topics: Vec<Topic>) -> MQTTResult<()> {
+        for topic in topics.iter() {
             self.subscriptions.entry(topic.to_owned()).and_modify(|values| {
                 values.remove(client_id);
                 info!(%topic, "unsubscribed from");
@@ -161,7 +103,10 @@ impl<T: Publisher + Clone> Broker<T> {
         let topic = publish.topic;
         let qos = publish.qos;
 
-        self.publish_message(ApplicationMessage { id, payload, topic, qos });
+        //this should be async
+        let message = ApplicationMessage { id, payload, topic, qos };
+
+        self.publish_message(message);
 
         Ok(())
     }
@@ -172,10 +117,18 @@ impl<T: Publisher + Clone> Broker<T> {
         Ok(())
     }
 
-    pub fn disconnect(&mut self, client_id: ClientId) {
+    pub fn disconnect_cleanly(&mut self, client_id: ClientId) {
         debug!("removing LWT");
 
         self.will_messages.remove(&client_id);
+    }
+    pub fn force_disconnect(&mut self, client_id: ClientId) {
+        debug!("forcing disconnect");
+
+        self.will_messages.remove(&client_id).map(|last_will| {
+            info!(topic = %last_will.topic, "publishing LWT");
+            self.publish_message(last_will)
+        });
     }
 
     pub fn cleanup(&mut self, client_id: ClientId) {
@@ -270,10 +223,10 @@ impl<T: Publisher + Clone> std::fmt::Debug for Broker<T> {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use futures::executor::block_on;
-
     use core::*;
+    use futures::executor::block_on;
     use mqtt::{MessageConsumer, Rx};
+    use tokio::sync::mpsc;
 
     use super::*;
 
@@ -306,11 +259,7 @@ mod tests {
             "/topic/#a",
             "/topic/#a/",
         ] {
-            let subscribe = Subscribe {
-                packet_id: 0,
-                topics: vec![(topic.to_string(), 1)].into_iter().collect(),
-            };
-
+            let subscribe = vec![(topic.to_string(), 1)].into_iter().collect();
             let result = broker.subscribe(&client_id.to_owned(), subscribe);
             assert!(result.is_err(), "Subscription should fail for filter: {}", topic);
         }
@@ -418,9 +367,7 @@ mod tests {
 
     fn subscribe_client(broker: &mut Broker<MessageConsumer>, client_id: &str, topics: &[&str]) {
         let topics = topics.iter().map(|str| (str.to_string(), 1)).collect();
-        let subscribe = Subscribe { packet_id: 0, topics };
-
-        assert!(broker.subscribe(&client_id.to_string(), subscribe).is_ok());
+        assert!(broker.subscribe(&client_id.to_string(), topics).is_ok());
     }
 
     fn register_client(broker: &mut Broker<MessageConsumer>, client_id: &str) -> Rx {
@@ -432,7 +379,7 @@ mod tests {
             clean_session: false,
         };
 
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel();
         let message_consumer = MessageConsumer::new(client_id.clone().to_string(), tx);
         let result = broker.register(&connect.client_id.unwrap(), message_consumer, None);
         assert!(result.is_ok());

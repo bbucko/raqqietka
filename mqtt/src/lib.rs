@@ -6,17 +6,19 @@ use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use broker::Broker;
+use core::*;
 use futures::prelude::*;
+use futures::SinkExt;
 use num_traits;
 use tokio::io::AsyncWrite;
 use tokio::sync;
 use tokio_util::codec::FramedWrite;
-use tracing::{debug, error};
-
-use broker::Broker;
-use core::*;
+use tracing::{debug, error, info};
 
 mod codec;
+
+pub type MqttBroker = Arc<sync::Mutex<Broker<MessageConsumer>>>;
 
 pub type Tx = sync::mpsc::UnboundedSender<Packet>;
 pub type Rx = sync::mpsc::UnboundedReceiver<Packet>;
@@ -26,20 +28,18 @@ pub struct PacketsCodec {}
 
 #[derive(Debug)]
 pub struct Client {
-    broker: Arc<sync::Mutex<Broker<MessageConsumer>>>,
+    broker: MqttBroker,
     id: ClientId,
     disconnected: bool,
     last_received_packet: SystemTime,
 }
 
 impl Client {
-    pub async fn new(
-        connect: Connect, broker: Arc<sync::Mutex<Broker<MessageConsumer>>>,
-    ) -> MQTTResult<(Client, ClientId, Option<Will>, MessageConsumer, MessageProducer)> {
+    pub async fn new(connect: Connect, broker: MqttBroker) -> MQTTResult<(Client, ClientId, Option<ApplicationMessage>, MessageConsumer, MessageProducer)> {
         let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
 
         //Create channels
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = sync::mpsc::unbounded_channel();
 
         //Register client in the broker
         let tx_publisher = MessageConsumer::new(client_id.clone(), tx);
@@ -52,7 +52,7 @@ impl Client {
             last_received_packet: SystemTime::now(),
         };
 
-        Ok((client, client_id, connect.will, tx_publisher, rx_publisher))
+        Ok((client, client_id, connect.will.map(|msg| msg.into()), tx_publisher, rx_publisher))
     }
 
     pub async fn process(self: &Self, result: Result<Packet, MQTTError>) -> MQTTResult<Option<Packet>> {
@@ -65,8 +65,9 @@ impl Client {
                     PacketType::SUBSCRIBE => {
                         let subscribe: Subscribe = packet.try_into()?;
                         let packet_id = subscribe.packet_id;
+                        let topics = subscribe.topics;
 
-                        let result = broker.lock().await.subscribe(&self.id, subscribe);
+                        let result = broker.lock().await.subscribe(&self.id, topics);
                         if let Ok(sub_results) = result {
                             let response: Packet = SubAck { packet_id, sub_results }.into();
                             return Ok(Some(response));
@@ -75,7 +76,7 @@ impl Client {
                     PacketType::UNSUBSCRIBE => {
                         let unsubscribe: Unsubscribe = packet.try_into()?;
 
-                        let _result = broker.lock().await.unsubscribe(&self.id, unsubscribe);
+                        let _result = broker.lock().await.unsubscribe(&self.id, unsubscribe.topics);
                     }
                     PacketType::PUBLISH => {
                         let publish: Publish = packet.try_into()?;
@@ -88,6 +89,7 @@ impl Client {
                             broker.publish(publish)?;
                         }
 
+                        //responses should be made in order of receiving
                         if qos == 1 {
                             let response: Packet = PubAck { packet_id }.into();
                             return Ok(Some(response));
@@ -110,7 +112,7 @@ impl Client {
                         error!("disconnected client (duplicated CONNECT)");
                     }
                     PacketType::DISCONNECT => {
-                        broker.lock().await.disconnect(client_id);
+                        broker.lock().await.disconnect_cleanly(client_id);
                     }
                     packet_type => {
                         panic!("Unknown packet type: {:?}", packet_type);
@@ -167,14 +169,17 @@ impl MessageProducer {
     pub fn new(client_id: ClientId, rx: Rx) -> Self {
         MessageProducer { rx, client_id }
     }
-}
 
-impl MessageProducer {
+    pub fn close(&mut self) {
+        info!("closing channel");
+        self.rx.close();
+    }
+
     pub async fn forward_to<W>(mut self, write: W)
-        where
-            W: AsyncWrite + Unpin,
-            FramedWrite<W, PacketsCodec>: Sink<Packet>,
-            <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
+    where
+        W: AsyncWrite + Unpin,
+        FramedWrite<W, PacketsCodec>: Sink<Packet>,
+        <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
     {
         let mut lines = FramedWrite::new(write, PacketsCodec::new());
 
@@ -185,6 +190,7 @@ impl MessageProducer {
                 }
                 Err(error) => {
                     error!(reason = %error, "error sending to client");
+                    self.close();
                     return;
                 }
             }
@@ -192,6 +198,7 @@ impl MessageProducer {
 
         // The client has disconnected, we can stop forwarding.
         debug!("client is no longer connected");
+        self.close();
     }
 }
 
