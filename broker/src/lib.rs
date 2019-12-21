@@ -48,7 +48,7 @@ impl<T: Publisher + Clone> Broker<T> {
         if let Some(existing_publisher) = self.clients.insert(client_id.clone(), publisher) {
             info!("disconnecting existing client");
             existing_publisher.disconnect();
-            self.force_disconnect(client_id.clone());
+            self.publish_lwt(&client_id);
         }
 
         let existing_will_message = will_message
@@ -64,25 +64,27 @@ impl<T: Publisher + Clone> Broker<T> {
     pub fn subscribe(&mut self, client_id: &str, subscribe: Vec<(Topic, Qos)>) -> MQTTResult<Vec<Qos>> {
         let mut result = vec![];
         for (topic, qos) in subscribe {
-            validate_subscribe(&topic)?;
+            let mut return_code = 0x80;
+            if validate_subscribe(&topic).is_ok() {
+                self.message_bus.entry(topic.clone()).or_insert_with(channel);
 
-            self.message_bus.entry(topic.clone()).or_insert_with(channel);
+                self.subscriptions
+                    .entry(topic.clone())
+                    .or_insert_with(HashSet::new)
+                    .insert(client_id.to_owned());
 
-            self.subscriptions
-                .entry(topic.clone())
-                .or_insert_with(HashSet::new)
-                .insert(client_id.to_owned());
+                return_code = qos;
+            }
 
-            info!(%topic, "subscribed to");
-
-            result.push(qos);
+            result.push(return_code);
+            info!(%topic, qos, "subscribed");
         }
 
         Ok(result)
     }
 
     pub fn unsubscribe(&mut self, client_id: &str, topics: Vec<Topic>) -> MQTTResult<()> {
-        for topic in topics.iter() {
+        for topic in topics {
             self.subscriptions.entry(topic.to_owned()).and_modify(|values| {
                 values.remove(client_id);
                 info!(%topic, "unsubscribed from");
@@ -104,9 +106,7 @@ impl<T: Publisher + Clone> Broker<T> {
             .fetch_add(1, SeqCst);
 
         let message = Message::new(id, topic, qos, payload);
-        self.publish_message(message);
-
-        Ok(())
+        self.publish_message(message)
     }
 
     pub fn acknowledge(&mut self, packet_id: u16) -> MQTTResult<()> {
@@ -121,17 +121,6 @@ impl<T: Publisher + Clone> Broker<T> {
         self.will_messages.remove(&client_id);
     }
 
-    pub fn force_disconnect(&mut self, client_id: ClientId) {
-        debug!("forcing disconnect");
-
-        //FIXME force disconnect
-
-        if let Some(last_will) = self.will_messages.remove(&client_id) {
-            info!(topic = %last_will.topic, "publishing LWT");
-            self.publish_message(last_will)
-        };
-    }
-
     pub fn cleanup(&mut self, client_id: ClientId) {
         info!("client disconnected");
 
@@ -141,10 +130,49 @@ impl<T: Publisher + Clone> Broker<T> {
             clients.remove(&client_id);
         });
 
-        if let Some(last_will) = self.will_messages.remove(&client_id) {
+        self.publish_lwt(&client_id);
+    }
+
+    fn publish_lwt(&mut self, client_id: &String) {
+        if let Some(last_will) = self.will_messages.remove(client_id) {
             info!(topic = %last_will.topic, "publishing LWT");
-            self.publish_message(last_will)
-        };
+            if self.publish_message(last_will).is_err() {
+                error!("error publishing LWT");
+            }
+        }
+    }
+
+    fn publish_message(&mut self, application_message: Message) -> MQTTResult<()> {
+        let last_packet_per_topic = &mut self.last_packet;
+        let clients = &mut self.clients;
+        let subscriptions = &mut self.subscriptions;
+
+        subscriptions
+            .iter()
+            .filter(|(subscription, _)| Broker::<T>::filter_matches_topic(subscription, &application_message.topic))
+            .flat_map(|(_, client_ips)| client_ips)
+            .map(|client_id| (clients.get(client_id), client_id))
+            .filter(|(publisher, _)| publisher.is_some())
+            .map(|(publisher, client_id)| (publisher.unwrap(), client_id))
+            .for_each(|(publisher, client_id)| {
+                let application_message = application_message.clone();
+                match publisher.send(application_message.clone()) {
+                    Ok(()) => {
+                        info!(%application_message, %publisher, "published");
+
+                        let application_message_id = application_message.id;
+                        let topic = application_message.topic;
+                        last_packet_per_topic
+                            .entry(client_id.to_string())
+                            .or_insert_with(HashMap::new)
+                            .insert(topic, application_message_id);
+                    }
+                    Err(e) => {
+                        error!(%e, "occurred while publishing message to {:?}", publisher);
+                    }
+                };
+            });
+        Ok(())
     }
 
     fn filter_matches_topic(subscription: &str, topic: &str) -> bool {
@@ -180,38 +208,6 @@ impl<T: Publisher + Clone> Broker<T> {
                 }
             }
         }
-    }
-
-    fn publish_message(&mut self, application_message: Message) {
-        let last_packet_per_topic = &mut self.last_packet;
-        let clients = &mut self.clients;
-        let subscriptions = &mut self.subscriptions;
-
-        subscriptions
-            .iter()
-            .filter(|(subscription, _)| Broker::<T>::filter_matches_topic(subscription, &application_message.topic))
-            .flat_map(|(_, client_ips)| client_ips)
-            .map(|client_id| (clients.get(client_id), client_id))
-            .filter(|(publisher, _)| publisher.is_some())
-            .map(|(publisher, client_id)| (publisher.unwrap(), client_id))
-            .for_each(|(publisher, client_id)| {
-                let application_message = application_message.clone();
-                match publisher.send(application_message.clone()) {
-                    Ok(()) => {
-                        info!(%application_message, %publisher, "published");
-
-                        let application_message_id = application_message.id;
-                        let topic = application_message.topic;
-                        last_packet_per_topic
-                            .entry(client_id.to_string())
-                            .or_insert_with(HashMap::new)
-                            .insert(topic, application_message_id);
-                    }
-                    Err(e) => {
-                        error!(%e, "occurred while publishing message to {:?}", publisher);
-                    }
-                };
-            });
     }
 }
 
@@ -262,7 +258,8 @@ mod tests {
         ] {
             let subscribe = vec![(topic.to_string(), 1)].into_iter().collect();
             let result = broker.subscribe(&client_id.to_owned(), subscribe);
-            assert!(result.is_err(), "Subscription should fail for filter: {}", topic);
+
+            assert_eq!(result.unwrap(), vec!(0x80));
         }
     }
 
@@ -351,6 +348,7 @@ mod tests {
         }
 
         rx.close();
+
         assert!(block_on(rx.recv()).is_none());
     }
 
@@ -360,6 +358,7 @@ mod tests {
 
     fn subscribe_client(broker: &mut Broker<MessageConsumer>, client_id: &str, topics: &[&str]) {
         let topics = topics.iter().map(|str| (str.to_string(), 1)).collect();
+
         assert!(broker.subscribe(&client_id.to_string(), topics).is_ok());
     }
 
@@ -375,6 +374,7 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel();
         let message_consumer = MessageConsumer::new(client_id.clone().to_string(), tx);
         let result = broker.register(&connect.client_id.unwrap(), message_consumer, None);
+
         assert!(result.is_ok());
 
         rx
