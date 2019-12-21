@@ -59,7 +59,7 @@ fn test_forced_disconnect_with_lwt() {
 
     let _ = broker.subscribe(&receiver_client_id, subscribe_message(&vec!["will"]));
 
-    broker.cleanup(client_id.to_owned());
+    broker.cleanup(client_id);
 
     assert_eq!(block_on(rx_lwt.recv()).unwrap().packet_type, PacketType::PUBLISH);
 }
@@ -86,7 +86,7 @@ fn test_clean_disconnect_with_lwt() {
 
     let _ = broker.subscribe(&receiver_client_id, subscribe_message(&vec!["will"]));
 
-    broker.cleanup(client_id.to_owned());
+    broker.cleanup(client_id);
 
     assert_eq!(block_on(rx_lwt.recv()).unwrap().packet_type, PacketType::PUBLISH);
 }
@@ -114,7 +114,7 @@ fn test_forced_disconnect_with_lwt_and_existing_client() {
     assert!(result.is_ok());
 
     //disconnect this client
-    broker.cleanup(client_id.to_owned());
+    broker.cleanup(client_id);
 
     assert_eq!(block_on(rx_lwt.recv()).unwrap().packet_type, PacketType::PUBLISH);
 

@@ -82,7 +82,7 @@ impl Client {
                         error!("disconnected client (duplicated CONNECT)");
                     }
                     PacketType::DISCONNECT => {
-                        broker.lock().await.disconnect_cleanly(client_id);
+                        broker.lock().await.disconnect_cleanly(&client_id);
                     }
                     packet_type => {
                         panic!("Unknown packet type: {:?}", packet_type);

@@ -75,7 +75,7 @@ async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), MQTTE
     {
         let mut broker = broker.lock().instrument(span.clone()).await;
         let _guard = span.enter();
-        broker.cleanup(client_id);
+        broker.cleanup(&client_id);
     }
 
     Ok(())

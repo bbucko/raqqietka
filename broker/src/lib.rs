@@ -43,7 +43,7 @@ impl<T: Publisher + Clone> Broker<T> {
     pub fn register(&mut self, client_id: &str, publisher: T, will_message: Option<Message>) -> MQTTResult<()> {
         debug!("started registration of new client");
 
-        let client_id = client_id.to_owned();
+        let client_id = client_id.to_string();
 
         if let Some(existing_publisher) = self.clients.insert(client_id.clone(), publisher) {
             info!("disconnecting existing client");
@@ -64,8 +64,7 @@ impl<T: Publisher + Clone> Broker<T> {
     pub fn subscribe(&mut self, client_id: &str, subscribe: Vec<(Topic, Qos)>) -> MQTTResult<Vec<Qos>> {
         let mut result = vec![];
         for (topic, qos) in subscribe {
-            let mut return_code = 0x80;
-            if validate_subscribe(&topic).is_ok() {
+            let return_code = if validate_subscribe(&topic).is_ok() {
                 self.message_bus.entry(topic.clone()).or_insert_with(channel);
 
                 self.subscriptions
@@ -73,8 +72,10 @@ impl<T: Publisher + Clone> Broker<T> {
                     .or_insert_with(HashSet::new)
                     .insert(client_id.to_owned());
 
-                return_code = qos;
-            }
+                qos
+            } else {
+                0x80
+            };
 
             result.push(return_code);
             info!(%topic, qos, "subscribed");
@@ -115,25 +116,25 @@ impl<T: Publisher + Clone> Broker<T> {
         Ok(())
     }
 
-    pub fn disconnect_cleanly(&mut self, client_id: ClientId) {
+    pub fn disconnect_cleanly(&mut self, client_id: &str) {
         debug!("removing LWT");
 
-        self.will_messages.remove(&client_id);
+        self.will_messages.remove(client_id);
     }
 
-    pub fn cleanup(&mut self, client_id: ClientId) {
+    pub fn cleanup(&mut self, client_id: &str) {
         info!("client disconnected");
 
-        self.clients.remove(&client_id);
+        self.clients.remove(client_id);
 
         self.subscriptions.iter_mut().for_each(|(_, clients)| {
-            clients.remove(&client_id);
+            clients.remove(client_id);
         });
 
-        self.publish_lwt(&client_id);
+        self.publish_lwt(client_id);
     }
 
-    fn publish_lwt(&mut self, client_id: &String) {
+    fn publish_lwt(&mut self, client_id: &str) {
         if let Some(last_will) = self.will_messages.remove(client_id) {
             info!(topic = %last_will.topic, "publishing LWT");
             if self.publish_message(last_will).is_err() {
