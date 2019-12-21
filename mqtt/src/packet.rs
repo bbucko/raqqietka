@@ -293,6 +293,7 @@ impl TryFrom<Packet> for Publish {
         let (topic, payload) = util::take_string(&payload)?;
 
         let (packet_id, payload) = if qos == 0 { (0, payload) } else { util::take_u18(&payload)? };
+
         //FIXME
         let payload = Bytes::copy_from_slice(payload);
 
@@ -330,6 +331,16 @@ impl From<Message> for Packet {
     fn from(application_message: Message) -> Self {
         let publish: Publish = application_message.into();
         publish.into()
+    }
+}
+
+impl From<Disconnect> for Packet {
+    fn from(_: Disconnect) -> Self {
+        Packet {
+            packet_type: PacketType::DISCONNECT,
+            flags: 0,
+            payload: Option::None,
+        }
     }
 }
 

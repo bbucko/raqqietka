@@ -36,18 +36,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         tokio::spawn(async move {
             let span = tracing::trace_span!("conn", ip = %addr.ip(), port = addr.port());
-            if let Err(e) = process(broker.clone(), socket).instrument(span).await {
+            if let Err(e) = process(broker, socket).instrument(span).await {
                 error!(%e, "an error occurred");
             }
         });
     }
 }
 
-async fn process(broker: MqttBroker, connection: net::TcpStream) -> Result<(), MQTTError> {
+async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), MQTTError> {
     debug!("accepted connection");
 
-    let (read, write) = io::split(connection);
+    let (read, write) = io::split(socket);
+
     let mut packets = codec::FramedRead::new(read, PacketsCodec::new());
+
     let connect = get_first_packet(&mut packets).await?;
 
     let (client, client_id, will, consumer, producer) = Client::new(connect, broker.clone()).await?;
@@ -84,19 +86,19 @@ async fn get_first_packet<R: AsyncRead + Unpin>(packets: &mut codec::FramedRead<
     match packets.next().await {
         Some(Ok(connect)) => {
             //Successful connection
-            return Ok(connect.try_into()?);
+            Ok(connect.try_into()?)
         }
         Some(Err(error)) => {
             //Didn't get a CONNECT
             error!(%error, "failed to get parse CONNECT - client disconnected.");
-            return Err(ClientError("invalid_connect".to_string()));
+            Err(ClientError("invalid_connect".to_string()))
         }
         None => {
             //Disconnected before sending a CONNECT
             error!("client disconnected before sending a CONNECT");
-            return Err(ClientError("invalid_connect".to_string()));
+            Err(ClientError("invalid_connect".to_string()))
         }
-    };
+    }
 }
 
 fn init_logging() {

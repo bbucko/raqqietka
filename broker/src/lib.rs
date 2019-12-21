@@ -41,13 +41,15 @@ impl<T: Publisher + Clone> Broker<T> {
     }
 
     pub fn register(&mut self, client_id: &str, publisher: T, will_message: Option<Message>) -> MQTTResult<()> {
-        info!("registered new client");
+        debug!("started registration of new client");
 
         let client_id = client_id.to_owned();
 
-        if let Some(_) = self.clients.insert(client_id.clone(), publisher.clone()) {
+        if let Some(existing_publisher) = self.clients.insert(client_id.clone(), publisher) {
+            info!("disconnecting existing client");
+            existing_publisher.disconnect();
             self.force_disconnect(client_id.clone());
-        };
+        }
 
         let existing_will_message = will_message
             .map(|application_message: Message| self.will_messages.insert(client_id.clone(), application_message))
@@ -55,6 +57,7 @@ impl<T: Publisher + Clone> Broker<T> {
 
         assert!(existing_will_message.is_none());
 
+        info!("registered new client");
         Ok(())
     }
 
@@ -89,7 +92,7 @@ impl<T: Publisher + Clone> Broker<T> {
         Ok(())
     }
 
-    pub fn validate(&self, topic: &Topic) -> MQTTResult<()> {
+    pub fn validate(&self, topic: &str) -> MQTTResult<()> {
         validate_publish(topic)
     }
 
@@ -100,7 +103,7 @@ impl<T: Publisher + Clone> Broker<T> {
             .or_insert_with(|| std::sync::atomic::AtomicU64::new(0))
             .fetch_add(1, SeqCst);
 
-        let message = Message { id, topic, qos, payload };
+        let message = Message::new(id, topic, qos, payload);
         self.publish_message(message);
 
         Ok(())
@@ -117,13 +120,16 @@ impl<T: Publisher + Clone> Broker<T> {
 
         self.will_messages.remove(&client_id);
     }
+
     pub fn force_disconnect(&mut self, client_id: ClientId) {
         debug!("forcing disconnect");
 
-        self.will_messages.remove(&client_id).map(|last_will| {
+        //FIXME force disconnect
+
+        if let Some(last_will) = self.will_messages.remove(&client_id) {
             info!(topic = %last_will.topic, "publishing LWT");
             self.publish_message(last_will)
-        });
+        };
     }
 
     pub fn cleanup(&mut self, client_id: ClientId) {
@@ -135,10 +141,10 @@ impl<T: Publisher + Clone> Broker<T> {
             clients.remove(&client_id);
         });
 
-        self.will_messages.remove(&client_id).map(|last_will| {
+        if let Some(last_will) = self.will_messages.remove(&client_id) {
             info!(topic = %last_will.topic, "publishing LWT");
             self.publish_message(last_will)
-        });
+        };
     }
 
     fn filter_matches_topic(subscription: &str, topic: &str) -> bool {
@@ -190,7 +196,7 @@ impl<T: Publisher + Clone> Broker<T> {
             .map(|(publisher, client_id)| (publisher.unwrap(), client_id))
             .for_each(|(publisher, client_id)| {
                 let application_message = application_message.clone();
-                match publisher.send(application_message.clone().into()) {
+                match publisher.send(application_message.clone()) {
                     Ok(()) => {
                         info!(%application_message, %publisher, "published");
 

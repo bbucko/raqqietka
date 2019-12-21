@@ -18,7 +18,7 @@ use num_traits::cast::ToPrimitive;
 use tokio::io::AsyncWrite;
 use tokio::sync;
 use tokio_util::codec::FramedWrite;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use broker::Broker;
 use core::*;
@@ -49,81 +49,10 @@ pub struct MessageConsumer {
     tx: Tx,
 }
 
-impl MessageConsumer {
-    pub fn new(client_id: ClientId, tx: Tx) -> Self {
-        MessageConsumer { tx, client_id }
-    }
-}
-
-impl Publisher for MessageConsumer {
-    fn send(&self, packet: Message) -> MQTTResult<()> {
-        self.tx.clone().send(packet.into()).map_err(|e| MQTTError::ServerError(e.to_string()))
-    }
-
-    fn ack(&self, ack_type: Ack) -> Result<(), MQTTError> {
-        let packet = match ack_type {
-            Ack::Connect => ConnAck::default().into(),
-            Ack::Publish(packet_id) => PubAck { packet_id }.into(),
-            Ack::Subscribe(packet_id, sub_results) => SubAck { packet_id, sub_results }.into(),
-            Ack::Ping => PingResp::default().into(),
-        };
-        self.tx.clone().send(packet).map_err(|e| MQTTError::ServerError(e.to_string()))
-    }
-}
-
-impl Display for MessageConsumer {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{{client_id = {}}}", self.client_id)
-    }
-}
-
 #[derive(Debug)]
 pub struct MessageProducer {
     client_id: ClientId,
     rx: Rx,
-}
-
-impl MessageProducer {
-    pub fn new(client_id: ClientId, rx: Rx) -> Self {
-        MessageProducer { rx, client_id }
-    }
-
-    pub fn close(&mut self) {
-        info!("closing channel");
-        self.rx.close();
-    }
-
-    pub async fn forward_to<W>(mut self, write: W)
-    where
-        W: AsyncWrite + Unpin,
-        FramedWrite<W, PacketsCodec>: Sink<Packet>,
-        <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
-    {
-        let mut lines = FramedWrite::new(write, PacketsCodec::new());
-
-        while let Some(msg) = self.rx.next().await {
-            match lines.send(msg).await {
-                Ok(_) => {
-                    //
-                }
-                Err(error) => {
-                    error!(reason = %error, "error sending to client");
-                    self.close();
-                    return;
-                }
-            }
-        }
-
-        // The client has disconnected, we can stop forwarding.
-        debug!("client is no longer connected");
-        self.close();
-    }
-}
-
-impl Display for MessageProducer {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{{client_id = {}}}", self.client_id)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -218,6 +147,24 @@ pub struct PingResp {}
 
 #[derive(Debug, Default)]
 pub struct Disconnect {}
+
+impl PubAck {
+    pub fn new(packet_id: PacketId) -> Self {
+        PubAck { packet_id }
+    }
+}
+
+impl SubAck {
+    pub fn new(packet_id: PacketId, sub_results: Vec<Qos>) -> Self {
+        SubAck { packet_id, sub_results }
+    }
+}
+
+impl UnsubAck {
+    pub fn new(packet_id: PacketId) -> Self {
+        UnsubAck { packet_id }
+    }
+}
 
 impl From<Will> for Message {
     fn from(will: Will) -> Self {

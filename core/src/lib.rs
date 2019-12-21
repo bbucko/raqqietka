@@ -22,6 +22,8 @@ pub trait Publisher: Send + Debug + Display {
     fn send(&self, packet: Message) -> MQTTResult<()>;
 
     fn ack(&self, ack: Ack) -> MQTTResult<()>;
+
+    fn disconnect(&self);
 }
 
 #[derive(Debug)]
@@ -29,6 +31,7 @@ pub enum Ack {
     Connect,
     Publish(PacketId),
     Subscribe(PacketId, Vec<Qos>),
+    Unsubscribe(PacketId),
     Ping,
 }
 
@@ -45,6 +48,12 @@ pub enum MQTTError {
     ClientError(String),
     ServerError(String),
     OtherError(String),
+}
+
+impl Message {
+    pub fn new(id: MessageId, topic: Topic, qos: Qos, payload: Bytes) -> Self {
+        Message { id, topic, qos, payload }
+    }
 }
 
 impl Hash for Message {

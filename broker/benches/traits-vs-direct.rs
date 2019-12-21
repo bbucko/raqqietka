@@ -4,6 +4,7 @@ extern crate test;
 
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use tokio::sync::mpsc;
 
 use core::*;
@@ -17,7 +18,7 @@ fn test_publish_through_direct(b: &mut test::Bencher) {
 
     b.iter(|| {
         let consumer = map.get_mut("abc").unwrap().clone();
-        consumer.send(create_packet())
+        consumer.send(create_msg().into())
     });
 }
 
@@ -29,14 +30,15 @@ fn test_publish_through_trait(b: &mut test::Bencher) {
 
     b.iter(|| {
         let consumer = map.get_mut("abc").unwrap();
-        consumer.send(create_packet())
+        consumer.send(create_msg().into())
     });
 }
 
-fn create_packet() -> Packet {
-    Packet {
-        packet_type: PacketType::CONNECT,
-        flags: 0,
-        payload: Option::None,
+fn create_msg() -> Message {
+    Message {
+        id: 1,
+        payload: Bytes::new(),
+        topic: "topic".to_string(),
+        qos: 0,
     }
 }
