@@ -1,11 +1,11 @@
+use bytes::buf::Buf;
 use bytes::{BufMut, Bytes, BytesMut};
+use num_traits::cast::FromPrimitive;
 use tokio_util::codec::{Decoder, Encoder};
 
 use core::*;
 
-use crate::num_traits::FromPrimitive;
-use crate::PacketsCodec;
-use bytes::buf::Buf;
+use crate::{Packet, PacketType, PacketsCodec};
 
 impl PacketsCodec {
     pub fn new() -> PacketsCodec {

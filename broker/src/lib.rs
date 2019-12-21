@@ -7,6 +7,7 @@ use std::fmt::Formatter;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
+use bytes::Bytes;
 use tracing::{debug, error, info};
 
 use core::*;
@@ -21,10 +22,10 @@ where
 {
     clients: HashMap<ClientId, T>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
-    will_messages: HashMap<ClientId, ApplicationMessage>,
-    message_bus: HashMap<Topic, (Sender<ApplicationMessage>, Receiver<ApplicationMessage>)>,
+    will_messages: HashMap<ClientId, Message>,
+    message_bus: HashMap<Topic, (Sender<Message>, Receiver<Message>)>,
     packet_counter: HashMap<Topic, std::sync::atomic::AtomicU64>,
-    last_packet: HashMap<ClientId, HashMap<Topic, PacketId>>,
+    last_packet: HashMap<ClientId, HashMap<Topic, GlobalPacketId>>,
 }
 
 impl<T: Publisher + Clone> Broker<T> {
@@ -39,7 +40,7 @@ impl<T: Publisher + Clone> Broker<T> {
         }
     }
 
-    pub fn register(&mut self, client_id: &str, publisher: T, will_message: Option<ApplicationMessage>) -> MQTTResult<()> {
+    pub fn register(&mut self, client_id: &str, publisher: T, will_message: Option<Message>) -> MQTTResult<()> {
         info!("registered new client");
 
         let client_id = client_id.to_owned();
@@ -49,7 +50,7 @@ impl<T: Publisher + Clone> Broker<T> {
         };
 
         let existing_will_message = will_message
-            .map(|application_message: ApplicationMessage| self.will_messages.insert(client_id.clone(), application_message))
+            .map(|application_message: Message| self.will_messages.insert(client_id.clone(), application_message))
             .flatten();
 
         assert!(existing_will_message.is_none());
@@ -88,24 +89,18 @@ impl<T: Publisher + Clone> Broker<T> {
         Ok(())
     }
 
-    pub fn validate(&self, publish: &Publish) -> MQTTResult<()> {
-        validate_publish(&publish.topic)
+    pub fn validate(&self, topic: &Topic) -> MQTTResult<()> {
+        validate_publish(topic)
     }
 
-    pub fn publish(&mut self, publish: Publish) -> MQTTResult<()> {
+    pub fn publish(&mut self, topic: Topic, qos: Qos, payload: Bytes) -> MQTTResult<()> {
         let id = self
             .packet_counter
-            .entry(publish.topic.clone())
+            .entry(topic.clone())
             .or_insert_with(|| std::sync::atomic::AtomicU64::new(0))
             .fetch_add(1, SeqCst);
 
-        let payload = publish.payload;
-        let topic = publish.topic;
-        let qos = publish.qos;
-
-        //this should be async
-        let message = ApplicationMessage { id, payload, topic, qos };
-
+        let message = Message { id, topic, qos, payload };
         self.publish_message(message);
 
         Ok(())
@@ -181,7 +176,7 @@ impl<T: Publisher + Clone> Broker<T> {
         }
     }
 
-    fn publish_message(&mut self, application_message: ApplicationMessage) {
+    fn publish_message(&mut self, application_message: Message) {
         let last_packet_per_topic = &mut self.last_packet;
         let clients = &mut self.clients;
         let subscriptions = &mut self.subscriptions;
@@ -223,10 +218,10 @@ impl<T: Publisher + Clone> std::fmt::Debug for Broker<T> {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use core::*;
     use futures::executor::block_on;
-    use mqtt::{MessageConsumer, Rx};
     use tokio::sync::mpsc;
+
+    use mqtt::{Connect, MessageConsumer, Rx};
 
     use super::*;
 
@@ -330,13 +325,7 @@ mod tests {
         subscribe_client(&mut broker, client_id, &["/topic"]);
 
         for topic in vec!["+", "/topic/+a", "/topic/a+b"] {
-            let publish = Publish {
-                packet_id: 1,
-                topic: topic.to_owned(),
-                qos: 0,
-                payload: Bytes::from("test"),
-            };
-            assert!(broker.validate(&publish).is_err(), "Publish failed for topic: {}", topic);
+            assert!(broker.validate(&topic.to_string()).is_err(), "Publish failed for topic: {}", topic);
         }
     }
 
@@ -348,13 +337,11 @@ mod tests {
         let mut rx = register_client(&mut broker, client_id);
 
         for topic in simple_topics() {
-            let publish = Publish {
-                packet_id: 1,
-                topic: topic.to_owned(),
-                qos: 0,
-                payload: Bytes::from("test"),
-            };
-            assert!(broker.publish(publish).is_ok(), "Publish failed for topic: {}", topic);
+            assert!(
+                broker.publish(topic.to_string(), 1, Bytes::from("test")).is_ok(),
+                "Publish failed for topic: {}",
+                topic
+            );
         }
 
         rx.close();

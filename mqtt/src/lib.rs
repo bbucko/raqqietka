@@ -1,22 +1,31 @@
 #![warn(rust_2018_idioms)]
 
-use std::convert::TryInto;
+#[macro_use]
+extern crate enum_primitive_derive;
+
+use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use broker::Broker;
-use core::*;
+use bytes::buf::BufMut;
+use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
 use futures::SinkExt;
 use num_traits;
+use num_traits::cast::ToPrimitive;
 use tokio::io::AsyncWrite;
 use tokio::sync;
 use tokio_util::codec::FramedWrite;
 use tracing::{debug, error, info};
 
+use broker::Broker;
+use core::*;
+
+mod client;
 mod codec;
+mod packet;
 
 pub type MqttBroker = Arc<sync::Mutex<Broker<MessageConsumer>>>;
 
@@ -34,107 +43,6 @@ pub struct Client {
     last_received_packet: SystemTime,
 }
 
-impl Client {
-    pub async fn new(connect: Connect, broker: MqttBroker) -> MQTTResult<(Client, ClientId, Option<ApplicationMessage>, MessageConsumer, MessageProducer)> {
-        let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
-
-        //Create channels
-        let (tx, rx) = sync::mpsc::unbounded_channel();
-
-        //Register client in the broker
-        let tx_publisher = MessageConsumer::new(client_id.clone(), tx);
-        let rx_publisher = MessageProducer::new(client_id.clone(), rx);
-
-        let client = Client {
-            broker,
-            id: client_id.clone(),
-            disconnected: false,
-            last_received_packet: SystemTime::now(),
-        };
-
-        Ok((client, client_id, connect.will.map(|msg| msg.into()), tx_publisher, rx_publisher))
-    }
-
-    pub async fn process(self: &Self, result: Result<Packet, MQTTError>) -> MQTTResult<Option<Packet>> {
-        let broker = &self.broker;
-        let client_id = self.id.clone();
-
-        match result {
-            Ok(packet) => {
-                match &packet.packet_type {
-                    PacketType::SUBSCRIBE => {
-                        let subscribe: Subscribe = packet.try_into()?;
-                        let packet_id = subscribe.packet_id;
-                        let topics = subscribe.topics;
-
-                        let result = broker.lock().await.subscribe(&self.id, topics);
-                        if let Ok(sub_results) = result {
-                            let response: Packet = SubAck { packet_id, sub_results }.into();
-                            return Ok(Some(response));
-                        }
-                    }
-                    PacketType::UNSUBSCRIBE => {
-                        let unsubscribe: Unsubscribe = packet.try_into()?;
-
-                        let _result = broker.lock().await.unsubscribe(&self.id, unsubscribe.topics);
-                    }
-                    PacketType::PUBLISH => {
-                        let publish: Publish = packet.try_into()?;
-                        let packet_id = publish.packet_id;
-                        let qos = publish.qos;
-
-                        {
-                            let mut broker = broker.lock().await;
-                            broker.validate(&publish)?;
-                            broker.publish(publish)?;
-                        }
-
-                        //responses should be made in order of receiving
-                        if qos == 1 {
-                            let response: Packet = PubAck { packet_id }.into();
-                            return Ok(Some(response));
-                        } else if qos == 2 {
-                            //FIXME
-                            //let response: Packet = PubAck { packet_id: publish.packet_id }.into();
-                            //self.packets.send(response).await?;
-                        }
-                    }
-                    PacketType::PUBACK => {
-                        let puback: PubAck = packet.try_into()?;
-                        broker.lock().await.acknowledge(puback.packet_id)?;
-                    }
-                    PacketType::PINGREQ => {
-                        //FIXME implement connection timeout
-                        let response: Packet = PingResp::default().into();
-                        return Ok(Some(response));
-                    }
-                    PacketType::CONNECT => {
-                        error!("disconnected client (duplicated CONNECT)");
-                    }
-                    PacketType::DISCONNECT => {
-                        broker.lock().await.disconnect_cleanly(client_id);
-                    }
-                    packet_type => {
-                        panic!("Unknown packet type: {:?}", packet_type);
-                    }
-                }
-            }
-
-            Err(e) => {
-                error!("an error occurred while processing messages for {}; error = {:?}", self.id, e);
-                return Err(MQTTError::OtherError(e.to_string()));
-            }
-        }
-        Ok(None)
-    }
-}
-
-impl fmt::Display for Client {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{{clientId = {}}}", self.id)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct MessageConsumer {
     client_id: ClientId,
@@ -148,7 +56,17 @@ impl MessageConsumer {
 }
 
 impl Publisher for MessageConsumer {
-    fn send(&self, packet: Packet) -> MQTTResult<()> {
+    fn send(&self, packet: Message) -> MQTTResult<()> {
+        self.tx.clone().send(packet.into()).map_err(|e| MQTTError::ServerError(e.to_string()))
+    }
+
+    fn ack(&self, ack_type: Ack) -> Result<(), MQTTError> {
+        let packet = match ack_type {
+            Ack::Connect => ConnAck::default().into(),
+            Ack::Publish(packet_id) => PubAck { packet_id }.into(),
+            Ack::Subscribe(packet_id, sub_results) => SubAck { packet_id, sub_results }.into(),
+            Ack::Ping => PingResp::default().into(),
+        };
         self.tx.clone().send(packet).map_err(|e| MQTTError::ServerError(e.to_string()))
     }
 }
@@ -205,5 +123,109 @@ impl MessageProducer {
 impl Display for MessageProducer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{{client_id = {}}}", self.client_id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Packet {
+    pub packet_type: PacketType,
+    pub flags: u8,
+    pub payload: Option<Bytes>,
+}
+
+#[derive(Debug, Primitive, PartialEq, Clone)]
+pub enum PacketType {
+    CONNECT = 1,
+    CONNACK = 2,
+    PUBLISH = 3,
+    PUBACK = 4,
+    //    PUBREC = 5,
+    //    PUBREL = 6,
+    //    PUBCOMP = 7,
+    SUBSCRIBE = 8,
+    SUBACK = 9,
+    UNSUBSCRIBE = 10,
+    UNSUBACK = 11,
+    PINGREQ = 12,
+    PINGRES = 13,
+    DISCONNECT = 14,
+}
+
+#[derive(Debug)]
+pub struct Connect {
+    pub version: u8,
+    pub client_id: Option<ClientId>,
+    pub auth: Option<ConnectAuth>,
+    pub will: Option<Will>,
+    pub clean_session: bool,
+}
+
+#[derive(Debug)]
+pub struct ConnectAuth {
+    pub username: String,
+    pub password: Option<Bytes>,
+}
+
+#[derive(Debug)]
+pub struct Will {
+    pub qos: Qos,
+    pub retain: bool,
+    pub topic: Topic,
+    pub message: Bytes,
+}
+
+#[derive(Debug, Default)]
+pub struct ConnAck {}
+
+#[derive(Debug)]
+pub struct Subscribe {
+    pub packet_id: PacketId,
+    pub topics: Vec<(Topic, Qos)>,
+}
+
+#[derive(Debug)]
+pub struct SubAck {
+    pub packet_id: PacketId,
+    pub sub_results: Vec<Qos>,
+}
+
+#[derive(Debug)]
+pub struct Unsubscribe {
+    pub packet_id: PacketId,
+    pub topics: Vec<Topic>,
+}
+
+#[derive(Debug)]
+pub struct UnsubAck {
+    pub packet_id: PacketId,
+}
+
+#[derive(Debug)]
+pub struct Publish {
+    pub packet_id: PacketId,
+    pub topic: Topic,
+    pub qos: Qos,
+    pub payload: Bytes,
+}
+
+#[derive(Debug)]
+pub struct PubAck {
+    pub packet_id: PacketId,
+}
+
+#[derive(Debug, Default)]
+pub struct PingResp {}
+
+#[derive(Debug, Default)]
+pub struct Disconnect {}
+
+impl From<Will> for Message {
+    fn from(will: Will) -> Self {
+        Message {
+            id: 1,
+            payload: will.message,
+            topic: will.topic,
+            qos: will.qos,
+        }
     }
 }

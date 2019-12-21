@@ -59,9 +59,7 @@ async fn process(broker: MqttBroker, connection: net::TcpStream) -> Result<(), M
         let mut broker = broker.lock().instrument(span.clone()).await;
         let _guard = span.enter();
 
-        let _ = broker
-            .register(&client_id, consumer.clone(), will)
-            .map(|_| consumer.send(core::ConnAck::default().into()))?;
+        let _ = broker.register(&client_id, consumer.clone(), will).map(|_| consumer.ack(Ack::Connect))?;
     }
 
     while let Some(packet) = packets.next().await {
@@ -69,7 +67,7 @@ async fn process(broker: MqttBroker, connection: net::TcpStream) -> Result<(), M
             .process(packet)
             .instrument(span.clone())
             .await?
-            .and_then(|response| consumer.send(response).ok());
+            .and_then(|response| consumer.ack(response).ok());
     }
 
     {
