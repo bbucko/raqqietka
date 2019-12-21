@@ -25,7 +25,7 @@ where
     will_messages: HashMap<ClientId, Message>,
     message_bus: HashMap<Topic, (Sender<Message>, Receiver<Message>)>,
     packet_counter: HashMap<Topic, std::sync::atomic::AtomicU64>,
-    last_packet: HashMap<ClientId, HashMap<Topic, GlobalPacketId>>,
+    last_packet: HashMap<ClientId, HashMap<Topic, MessageId>>,
 }
 
 impl<T: Publisher + Clone> Broker<T> {

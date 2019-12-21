@@ -11,7 +11,7 @@ mod mqtt_error;
 pub mod util;
 
 pub type ClientId = String;
-pub type GlobalPacketId = u64;
+pub type MessageId = u64;
 pub type PacketId = u16;
 pub type Topic = String;
 pub type Qos = u8;
@@ -24,6 +24,7 @@ pub trait Publisher: Send + Debug + Display {
     fn ack(&self, ack: Ack) -> MQTTResult<()>;
 }
 
+#[derive(Debug)]
 pub enum Ack {
     Connect,
     Publish(PacketId),
@@ -31,19 +32,19 @@ pub enum Ack {
     Ping,
 }
 
+#[derive(Eq, Debug, Clone)]
+pub struct Message {
+    pub id: MessageId,
+    pub payload: Bytes,
+    pub topic: Topic,
+    pub qos: Qos,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum MQTTError {
     ClientError(String),
     ServerError(String),
     OtherError(String),
-}
-
-#[derive(Eq, Debug, Clone)]
-pub struct Message {
-    pub id: GlobalPacketId,
-    pub payload: Bytes,
-    pub topic: Topic,
-    pub qos: Qos,
 }
 
 impl Hash for Message {

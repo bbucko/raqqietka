@@ -28,21 +28,20 @@ impl Client {
         Ok((client, client_id, connect.will.map(|msg| msg.into()), tx_publisher, rx_publisher))
     }
 
-    pub async fn process(self: &Self, result: Result<Packet, MQTTError>) -> MQTTResult<Option<Ack>> {
+    pub async fn process(self: &Self, packet: Result<Packet, MQTTError>) -> MQTTResult<Option<Ack>> {
         let broker = &self.broker;
         let client_id = self.id.clone();
 
-        match result {
+        match packet {
             Ok(packet) => {
                 match &packet.packet_type {
                     PacketType::SUBSCRIBE => {
                         let subscribe: Subscribe = packet.try_into()?;
                         let topics = subscribe.topics;
+                        let packet_id = subscribe.packet_id;
 
-                        let result = broker.lock().await.subscribe(&self.id, topics);
-                        if let Ok(sub_results) = result {
-                            return Ok(Some(Ack::Subscribe(subscribe.packet_id, sub_results)));
-                        }
+                        let result = broker.lock().await.subscribe(&client_id, topics);
+                        return result.map(|sub_results| Some(Ack::Subscribe(packet_id, sub_results)));
                     }
                     PacketType::UNSUBSCRIBE => {
                         let unsubscribe: Unsubscribe = packet.try_into()?;
