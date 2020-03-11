@@ -31,6 +31,12 @@ pub type MqttBroker = Arc<sync::Mutex<Broker<MessageConsumer>>>;
 
 pub type Tx = sync::mpsc::UnboundedSender<Packet>;
 pub type Rx = sync::mpsc::UnboundedReceiver<Packet>;
+pub type ControllerTx = sync::mpsc::UnboundedSender<Control>;
+
+pub enum Control {
+    PACKET(Packet),
+    DISCONNECT,
+}
 
 #[derive(Debug, Default)]
 pub struct PacketsCodec {}
@@ -39,9 +45,9 @@ pub struct PacketsCodec {}
 pub struct Client {
     broker: MqttBroker,
     id: ClientId,
-    disconnected: bool,
     last_received_packet: SystemTime,
-    disconnect: sync::mpsc::UnboundedSender<Result<Packet, MQTTError>>,
+    connected_on: SystemTime,
+    controller: ControllerTx,
 }
 
 #[derive(Debug, Clone)]

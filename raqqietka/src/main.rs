@@ -63,24 +63,20 @@ async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), MQTTE
 
         let _ = broker.register(&client_id, consumer.clone(), will).map(|_| consumer.ack(Ack::Connect))?;
     }
-    let mut packets = disconnect_handler.merge(packets);
+    let mut packets = disconnect_handler
+        .map(|control| MQTTResult::Ok(control))
+        .merge(packets.map(|pkt| pkt.map(|pkk| Control::PACKET(pkk))));
+
     while let Some(packet) = packets.next().await {
         match packet {
-            Err(MQTTError::Disconnect) => {
-                {
-                    let mut broker = broker.lock().instrument(span.clone()).await;
-                    let _guard = span.enter();
-                    info!("Closing connection");
-
-                    broker.cleanup(&client_id);
-                }
-                return Ok(());
+            Err(MQTTError::Disconnect) | Ok(Control::DISCONNECT) => {
+                break;
             }
             Err(e) => {
                 error!("an error occurred while processing messages for {}; error = {:?}", client_id, e);
                 return Err(MQTTError::OtherError(e.to_string()));
             }
-            Ok(packet) => {
+            Ok(Control::PACKET(packet)) => {
                 client
                     .process(packet)
                     .instrument(span.clone())

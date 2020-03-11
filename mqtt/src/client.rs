@@ -10,33 +10,30 @@ use tokio::sync::mpsc::UnboundedReceiver;
 impl Client {
     pub async fn new(
         connect: Connect, broker: MqttBroker,
-    ) -> MQTTResult<(
-        Client,
-        ClientId,
-        Option<Message>,
-        MessageConsumer,
-        MessageProducer,
-        UnboundedReceiver<Result<Packet, MQTTError>>,
-    )> {
+    ) -> MQTTResult<(Client, ClientId, Option<Message>, MessageConsumer, MessageProducer, UnboundedReceiver<Control>)> {
         let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
 
         //Create channels
         let (tx, rx) = sync::mpsc::unbounded_channel();
-        let (disconnect, disconnect_handler) = sync::mpsc::unbounded_channel();
+        let (controller, control_rx) = sync::mpsc::unbounded_channel();
 
         //Register client in the broker
         let consumer = MessageConsumer::new(client_id.clone(), tx);
         let producer = MessageProducer::new(client_id.clone(), rx);
 
+        let id = client_id.clone();
+        let last_received_packet = SystemTime::now();
+        let connected_on = SystemTime::now();
+
         let client = Client {
             broker,
-            id: client_id.clone(),
-            disconnected: false,
-            last_received_packet: SystemTime::now(),
-            disconnect,
+            id,
+            last_received_packet,
+            connected_on,
+            controller,
         };
 
-        Ok((client, client_id, connect.will.map(|msg| msg.into()), consumer, producer, disconnect_handler))
+        Ok((client, client_id, connect.will.map(|msg| msg.into()), consumer, producer, control_rx))
     }
 
     pub async fn process(self: &Self, packet: Packet) -> MQTTResult<Option<Ack>> {
@@ -92,7 +89,7 @@ impl Client {
             }
             PacketType::DISCONNECT => {
                 broker.lock().await.disconnect_cleanly(&client_id);
-                if self.disconnect.send(Err(MQTTError::Disconnect)).is_err() {
+                if self.controller.send(Control::DISCONNECT).is_err() {
                     panic!("unable to properly disconnect");
                 }
             }
@@ -174,7 +171,7 @@ impl MessageProducer {
                     //
                 }
                 Err(error) => {
-                    error ! (reason = % error, "error sending to client");
+                    error!(reason = % error, "error sending to client");
                     return;
                 }
             }
