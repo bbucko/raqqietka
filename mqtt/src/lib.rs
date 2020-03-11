@@ -41,12 +41,14 @@ pub struct Client {
     id: ClientId,
     disconnected: bool,
     last_received_packet: SystemTime,
+    disconnect: sync::mpsc::UnboundedSender<Result<Packet, MQTTError>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct MessageConsumer {
     client_id: ClientId,
     tx: Tx,
+    connected_on: SystemTime,
 }
 
 #[derive(Debug)]

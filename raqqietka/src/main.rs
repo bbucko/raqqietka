@@ -3,8 +3,6 @@
 use std::convert::TryInto;
 use std::net::SocketAddr;
 use std::sync::Arc;
-
-use futures_util::stream::StreamExt;
 use tokio::io;
 use tokio::net;
 use tokio::prelude::*;
@@ -18,6 +16,7 @@ use broker::*;
 use core::MQTTError::ClientError;
 use core::*;
 use mqtt::*;
+use tokio::stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,15 +43,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), MQTTError> {
+    //FIXME rethink and rewrite the flow. consider
+
     debug!("accepted connection");
 
     let (read, write) = io::split(socket);
 
     let mut packets = codec::FramedRead::new(read, PacketsCodec::new());
-
     let connect = get_first_packet(&mut packets).await?;
 
-    let (client, client_id, will, consumer, producer) = Client::new(connect, broker.clone()).await?;
+    let (client, client_id, will, consumer, producer, disconnect_handler) = Client::new(connect, broker.clone()).await?;
     let span = info_span!("mqtt", %client_id);
 
     tokio::spawn(producer.forward_to(write).instrument(span.clone()));
@@ -63,18 +63,38 @@ async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), MQTTE
 
         let _ = broker.register(&client_id, consumer.clone(), will).map(|_| consumer.ack(Ack::Connect))?;
     }
-
+    let mut packets = disconnect_handler.merge(packets);
     while let Some(packet) = packets.next().await {
-        client
-            .process(packet)
-            .instrument(span.clone())
-            .await?
-            .and_then(|response| consumer.ack(response).ok());
+        match packet {
+            Err(MQTTError::Disconnect) => {
+                {
+                    let mut broker = broker.lock().instrument(span.clone()).await;
+                    let _guard = span.enter();
+                    info!("Closing connection");
+
+                    broker.cleanup(&client_id);
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                error!("an error occurred while processing messages for {}; error = {:?}", client_id, e);
+                return Err(MQTTError::OtherError(e.to_string()));
+            }
+            Ok(packet) => {
+                client
+                    .process(packet)
+                    .instrument(span.clone())
+                    .await?
+                    .and_then(|response| consumer.ack(response).ok());
+            }
+        }
     }
 
     {
         let mut broker = broker.lock().instrument(span.clone()).await;
         let _guard = span.enter();
+
+        info!("performing cleanup");
         broker.cleanup(&client_id);
     }
 

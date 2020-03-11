@@ -5,7 +5,6 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fmt::Formatter;
 use std::sync::atomic::Ordering::SeqCst;
-use std::sync::mpsc::{channel, Receiver, Sender};
 
 use bytes::Bytes;
 use tracing::{debug, error, info};
@@ -23,7 +22,6 @@ where
     clients: HashMap<ClientId, T>,
     subscriptions: HashMap<Topic, HashSet<ClientId>>,
     will_messages: HashMap<ClientId, Message>,
-    message_bus: HashMap<Topic, (Sender<Message>, Receiver<Message>)>,
     packet_counter: HashMap<Topic, std::sync::atomic::AtomicU64>,
     last_packet: HashMap<ClientId, HashMap<Topic, MessageId>>,
 }
@@ -34,7 +32,6 @@ impl<T: Publisher + Clone> Broker<T> {
             clients: Default::default(),
             subscriptions: Default::default(),
             will_messages: Default::default(),
-            message_bus: Default::default(),
             packet_counter: Default::default(),
             last_packet: Default::default(),
         }
@@ -65,8 +62,6 @@ impl<T: Publisher + Clone> Broker<T> {
         let mut result = vec![];
         for (topic, qos) in subscribe {
             let return_code = if validate_subscribe(&topic).is_ok() {
-                self.message_bus.entry(topic.clone()).or_insert_with(channel);
-
                 self.subscriptions
                     .entry(topic.clone())
                     .or_insert_with(HashSet::new)

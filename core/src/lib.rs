@@ -48,6 +48,8 @@ pub enum MQTTError {
     ClientError(String),
     ServerError(String),
     OtherError(String),
+    //FIXME remove this ugly, ugly hack :)
+    Disconnect,
 }
 
 impl Message {
