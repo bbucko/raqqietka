@@ -50,9 +50,10 @@ async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), MQTTE
     let (read, write) = io::split(socket);
 
     let mut packets = codec::FramedRead::new(read, PacketsCodec::new());
+
     let connect = get_first_packet(&mut packets).await?;
 
-    let (client, client_id, will, consumer, producer, disconnect_handler) = Client::new(connect, broker.clone()).await?;
+    let (client, client_id, will, consumer, producer, commands) = Client::new(connect, broker.clone()).await?;
     let span = info_span!("mqtt", %client_id);
 
     tokio::spawn(producer.forward_to(write).instrument(span.clone()));
@@ -61,22 +62,23 @@ async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), MQTTE
         let mut broker = broker.lock().instrument(span.clone()).await;
         let _guard = span.enter();
 
-        let _ = broker.register(&client_id, consumer.clone(), will).map(|_| consumer.ack(Ack::Connect))?;
+        broker.register(&client_id, consumer.clone(), will).and_then(|_| consumer.ack(Ack::Connect))?;
     }
-    let mut packets = disconnect_handler
-        .map(|control| MQTTResult::Ok(control))
-        .merge(packets.map(|pkt| pkt.map(|pkk| Control::PACKET(pkk))));
+
+    let mut packets = packets
+        .map(|result| result.map(|packet| Command::PACKET(packet)))
+        .merge(commands.map(|command| MQTTResult::Ok(command)));
 
     while let Some(packet) = packets.next().await {
         match packet {
-            Err(MQTTError::Disconnect) | Ok(Control::DISCONNECT) => {
-                break;
-            }
             Err(e) => {
                 error!("an error occurred while processing messages for {}; error = {:?}", client_id, e);
                 return Err(MQTTError::OtherError(e.to_string()));
             }
-            Ok(Control::PACKET(packet)) => {
+            Ok(Command::DISCONNECT) => {
+                break;
+            }
+            Ok(Command::PACKET(packet)) => {
                 client
                     .process(packet)
                     .instrument(span.clone())

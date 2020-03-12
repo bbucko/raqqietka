@@ -31,9 +31,9 @@ pub type MqttBroker = Arc<sync::Mutex<Broker<MessageConsumer>>>;
 
 pub type Tx = sync::mpsc::UnboundedSender<Packet>;
 pub type Rx = sync::mpsc::UnboundedReceiver<Packet>;
-pub type ControllerTx = sync::mpsc::UnboundedSender<Control>;
+pub type ControllerTx = sync::mpsc::UnboundedSender<Command>;
 
-pub enum Control {
+pub enum Command {
     PACKET(Packet),
     DISCONNECT,
 }

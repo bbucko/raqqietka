@@ -10,12 +10,12 @@ use tokio::sync::mpsc::UnboundedReceiver;
 impl Client {
     pub async fn new(
         connect: Connect, broker: MqttBroker,
-    ) -> MQTTResult<(Client, ClientId, Option<Message>, MessageConsumer, MessageProducer, UnboundedReceiver<Control>)> {
+    ) -> MQTTResult<(Client, ClientId, Option<Message>, MessageConsumer, MessageProducer, UnboundedReceiver<Command>)> {
         let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
 
         //Create channels
         let (tx, rx) = sync::mpsc::unbounded_channel();
-        let (controller, control_rx) = sync::mpsc::unbounded_channel();
+        let (controller, commands) = sync::mpsc::unbounded_channel();
 
         //Register client in the broker
         let consumer = MessageConsumer::new(client_id.clone(), tx);
@@ -33,7 +33,7 @@ impl Client {
             controller,
         };
 
-        Ok((client, client_id, connect.will.map(|msg| msg.into()), consumer, producer, control_rx))
+        Ok((client, client_id, connect.will.map(|msg| msg.into()), consumer, producer, commands))
     }
 
     pub async fn process(self: &Self, packet: Packet) -> MQTTResult<Option<Ack>> {
@@ -89,7 +89,7 @@ impl Client {
             }
             PacketType::DISCONNECT => {
                 broker.lock().await.disconnect_cleanly(&client_id);
-                if self.controller.send(Control::DISCONNECT).is_err() {
+                if self.controller.send(Command::DISCONNECT).is_err() {
                     panic!("unable to properly disconnect");
                 }
             }
