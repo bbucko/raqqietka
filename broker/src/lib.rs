@@ -60,12 +60,13 @@ impl<T: Publisher + Clone> Broker<T> {
 
     pub fn subscribe(&mut self, client_id: &str, subscribe: Vec<(Topic, Qos)>) -> MQTTResult<Vec<Qos>> {
         let mut result = vec![];
+
         for (topic, qos) in subscribe {
             let return_code = if validate_subscribe(&topic).is_ok() {
                 self.subscriptions
                     .entry(topic.clone())
                     .or_insert_with(HashSet::new)
-                    .insert(client_id.to_owned());
+                    .insert(client_id.to_string());
 
                 qos
             } else {
@@ -139,6 +140,7 @@ impl<T: Publisher + Clone> Broker<T> {
     }
 
     fn publish_message(&mut self, application_message: Message) -> MQTTResult<()> {
+        //TODO Go Async
         let last_packet_per_topic = &mut self.last_packet;
         let clients = &mut self.clients;
         let subscriptions = &mut self.subscriptions;

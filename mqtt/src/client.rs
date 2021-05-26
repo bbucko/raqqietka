@@ -1,16 +1,21 @@
-#![warn(rust_2018_idioms)]
-
 use core::MQTTError;
 use std::fmt;
 use std::fmt::Formatter;
 
 use crate::*;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
 impl Client {
     pub async fn new(
         connect: Connect, broker: MqttBroker,
-    ) -> MQTTResult<(Client, ClientId, Option<Message>, MessageConsumer, MessageProducer, UnboundedReceiver<Command>)> {
+    ) -> MQTTResult<(
+        Client,
+        ClientId,
+        Option<Message>,
+        MessageConsumer,
+        MessageProducer,
+        UnboundedReceiverStream<Command>,
+    )> {
         let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
 
         //Create channels
@@ -33,7 +38,14 @@ impl Client {
             controller,
         };
 
-        Ok((client, client_id, connect.will.map(|msg| msg.into()), consumer, producer, commands))
+        Ok((
+            client,
+            client_id,
+            connect.will.map(|msg| msg.into()),
+            consumer,
+            producer,
+            UnboundedReceiverStream::new(commands),
+        ))
     }
 
     pub async fn process(self: &Self, packet: Packet) -> MQTTResult<Option<Ack>> {
@@ -85,12 +97,12 @@ impl Client {
                 return Ok(Some(Ack::Ping));
             }
             PacketType::CONNECT => {
-                error!("disconnected client (duplicated CONNECT)");
+                error!("disconnecting client (duplicated CONNECT)");
             }
             PacketType::DISCONNECT => {
                 broker.lock().await.disconnect_cleanly(&client_id);
                 if self.controller.send(Command::DISCONNECT).is_err() {
-                    panic!("unable to properly disconnect");
+                    panic!("unable to properly disconnect client");
                 }
             }
             packet_type => {
@@ -156,7 +168,7 @@ impl MessageProducer {
     {
         let mut lines = FramedWrite::new(write, PacketsCodec::new());
 
-        while let Some(msg) = self.rx.next().await {
+        while let Some(msg) = self.rx.recv().await {
             if msg.packet_type == PacketType::DISCONNECT {
                 //Do not forward. Just close the connection.
                 debug!("closing the connection");

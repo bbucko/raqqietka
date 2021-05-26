@@ -49,11 +49,10 @@ impl Decoder for PacketsCodec {
     }
 }
 
-impl Encoder for PacketsCodec {
-    type Item = Packet;
+impl Encoder<Packet> for PacketsCodec {
     type Error = MQTTError;
 
-    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: Packet, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let bytes: Bytes = item.into();
         dst.reserve(bytes.len());
         dst.put(bytes);

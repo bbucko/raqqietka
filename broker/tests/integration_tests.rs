@@ -13,7 +13,7 @@ fn test_register() {
     let (tx, _rx) = mpsc::unbounded_channel();
     let client_id = "client_id";
     let publisher = MessageConsumer::new(client_id.to_owned(), tx);
-    let result = broker.register(&client_id, publisher, None);
+    let result = broker.register(client_id, publisher, None);
 
     assert!(result.is_ok());
 }

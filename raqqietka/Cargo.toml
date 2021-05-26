@@ -7,13 +7,14 @@ edition = "2018"
 [dependencies]
 bytes = "0.5"
 
-tokio = {version = "0.2", features = ["sync", "tcp", "rt-threaded", "macros", "io-util", "stream"]}
-tokio-util = {version = "0.2", features = ["codec"]}
+tokio = {version = "1.6", features = ["sync", "macros", "io-util", "rt", "rt-multi-thread", "net"]}
+tokio-util = {version = "0.6", features = ["codec"]}
+tokio-stream = "0.1"
 
 futures-util = "0.3"
 
 tracing = {version = "0.1", features = ["std"], default-features = false}
-tracing-subscriber = {version = "0.2.0-alpha", features = ["fmt", "ansi", "env-filter", "chrono", "smallvec"], default-features = false}
+tracing-subscriber = {version = "0.2", features = ["fmt", "ansi", "env-filter", "chrono", "smallvec"], default-features = false}
 tracing-futures = { version = "0.2", features = ["std-future"], default-features = false}
 
 mqtt = { path = "../mqtt" }
