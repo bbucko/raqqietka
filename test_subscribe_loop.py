@@ -1,4 +1,5 @@
 #!/usr/local/bin/python3
+import sys
 
 import paho.mqtt.client as mqtt
 import time
@@ -27,7 +28,7 @@ def on_log(client, userdata, level, buf):
     print("LOG: " + buf)
 
 
-client = mqtt.Client(client_id="python")
+client = mqtt.Client(client_id="python_invalid")
 client.on_connect = on_connect
 client.on_disconnect = on_disconnect
 client.on_publish = on_publish
@@ -35,11 +36,7 @@ client.on_subscribe = on_subscribe
 client.on_log = on_log
 client.on_message = on_message
 client.connect("localhost", 1883, 60)
-client.loop_start()
-time.sleep(1)
 client.subscribe("topic", qos=1)
-client.publish(topic="topic", payload="test.py_qos0", qos=0).wait_for_publish()
-client.publish(topic="topic", payload="test.py_qos1", qos=1).wait_for_publish()
-client.disconnect()
-time.sleep(1)
+client.loop_forever()
 
+# sys.exit(1)

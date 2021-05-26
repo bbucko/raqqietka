@@ -166,10 +166,11 @@ impl<T: Publisher + Clone> Broker<T> {
                             .insert(topic, application_message_id);
                     }
                     Err(e) => {
-                        error!(%e, "occurred while publishing message to {:?}", publisher);
+                        error!(reason = %e, "error occurred while publishing message to {:?}", client_id);
                     }
                 };
             });
+
         Ok(())
     }
 

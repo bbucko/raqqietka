@@ -45,6 +45,7 @@ pub struct Message {
 pub enum MQTTError {
     ClientError(String),
     ServerError(String),
+    ClosedClient(String),
     OtherError(String),
 }
 

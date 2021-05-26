@@ -3,6 +3,8 @@ use std::fmt;
 use std::fmt::Formatter;
 
 use crate::*;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 impl Client {
@@ -128,6 +130,11 @@ impl MessageConsumer {
 
 impl Publisher for MessageConsumer {
     fn send(&self, message: Message) -> MQTTResult<()> {
+        if self.tx.is_closed() {
+            error!("Publishing to already closed client {:?}", self.client_id);
+            return Err(MQTTError::ClosedClient(self.client_id.clone()));
+        }
+
         self.tx.send(message.into()).map_err(|e| MQTTError::ServerError(e.to_string()))
     }
 
@@ -160,37 +167,41 @@ impl MessageProducer {
         MessageProducer { rx, client_id }
     }
 
-    pub async fn forward_to<W>(mut self, write: W)
+    pub async fn forward_to<W>(mut self, write: W, commands: mpsc::UnboundedSender<Command>)
     where
         W: AsyncWrite + Unpin,
         FramedWrite<W, PacketsCodec>: Sink<Packet>,
         <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
     {
-        let mut lines = FramedWrite::new(write, PacketsCodec::new());
+        let mut packets = FramedWrite::new(write, PacketsCodec::new());
 
-        while let Some(msg) = self.rx.recv().await {
-            if msg.packet_type == PacketType::DISCONNECT {
+        while let Some(packet) = self.rx.recv().await {
+            if packet.packet_type == PacketType::DISCONNECT {
                 //Do not forward. Just close the connection.
                 debug!("closing the connection");
-                if lines.close().await.is_err() {
-                    error!("unable to disconnect")
-                }
+                self.send_disconnect_cmd(commands);
                 return;
             }
 
-            match lines.send(msg).await {
+            match packets.send(packet).await {
                 Ok(_) => {
-                    //
+                    debug!("sending packet to client {:?}", self.client_id)
                 }
                 Err(error) => {
                     error!(reason = % error, "error sending to client");
+                    self.send_disconnect_cmd(commands);
                     return;
                 }
             }
         }
+    }
 
-        // The client has disconnected, we can stop forwarding.
-        debug!("client is no longer connected");
+    fn send_disconnect_cmd(mut self, commands: UnboundedSender<Command>) {
+        if commands.send(Command::DISCONNECT).is_ok() {
+            self.rx.close();
+        } else {
+            error!("unable to disconnect the client")
+        }
     }
 }
 

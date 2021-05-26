@@ -18,7 +18,7 @@ use num_traits::cast::ToPrimitive;
 use tokio::io::AsyncWrite;
 use tokio::sync;
 use tokio_util::codec::FramedWrite;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use broker::Broker;
 use core::*;

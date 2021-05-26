@@ -7,6 +7,7 @@ use tokio::io;
 use tokio::io::AsyncRead;
 use tokio::net;
 use tokio::sync;
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tokio_util::codec;
 use tracing::{debug, error, info, info_span, Level};
@@ -16,6 +17,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 use broker::*;
 use core::*;
 use mqtt::*;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,8 +44,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), core::MQTTError> {
-    //FIXME rethink and rewrite the flow. consider
-
     debug!("accepted connection");
 
     let (read, write) = io::split(socket);
@@ -56,7 +56,12 @@ async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), core:
 
     let span = info_span!("mqtt", %client_id);
 
-    tokio::spawn(msg_out.forward_to(write).instrument(span.clone()));
+    let (close_tx, close_rx) = mpsc::unbounded_channel();
+    let close_rx = UnboundedReceiverStream::new(close_rx);
+
+    tokio::spawn(msg_out.forward_to(write, close_tx).instrument(span.clone()));
+
+    //TODO: add health-check watcher
 
     {
         let mut broker = broker.lock().instrument(span.clone()).await;
@@ -66,8 +71,9 @@ async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), core:
     }
 
     let mut packets = packets
-        .map(|result| result.map(|packet| Command::PACKET(packet)))
-        .merge(commands.map(|command| MQTTResult::Ok(command)));
+        .map(|result| result.map(Command::PACKET))
+        .merge(commands.map(MQTTResult::Ok))
+        .merge(close_rx.map(MQTTResult::Ok));
 
     while let Some(packet) = packets.next().await {
         match packet {
@@ -82,8 +88,9 @@ async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), core:
                 break;
             }
             Err(e) => {
-                error!("an error occurred while processing messages for {}; error = {:?}", client_id, e);
-                return Err(MQTTError::OtherError(e.to_string()));
+                error!(reason = %e, "an error occurred while processing messages for {}", client_id);
+                // return Err(MQTTError::OtherError(e.to_string()));
+                break;
             }
         }
     }
