@@ -5,7 +5,8 @@ authors = ["Blazej Bucko <blazej.bucko@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-bytes = "0.5"
+mqtt_proto = {package = "mqtt-protocol", version = "0.11", features = ["tokio-codec"] }
+mqtt-codec = "0.3"
 
 tokio = {version = "1.6", features = ["sync", "macros", "io-util", "rt", "rt-multi-thread", "net"]}
 tokio-util = {version = "0.6", features = ["codec"]}

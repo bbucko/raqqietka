@@ -5,6 +5,9 @@ authors = ["Blazej Bucko <blazej.bucko@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+mqtt_proto = { package = "mqtt-protocol", version = "0.11" }
+mqttbytes = "0.3"
+
 tracing = { version = "0.1", features = ["std"], default-features = false }
 bytes = "1"
 num-traits = "0.2"

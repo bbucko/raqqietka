@@ -1,5 +1,3 @@
-#![warn(rust_2018_idioms)]
-
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;

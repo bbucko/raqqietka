@@ -3,13 +3,18 @@ use std::fmt;
 use std::fmt::Formatter;
 
 use crate::*;
+use mqtt_proto::control::ConnectReturnCode;
+use mqtt_proto::packet::suback::SubscribeReturnCode;
+use mqtt_proto::packet::*;
+use mqtt_proto::{QualityOfService, TopicName};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_util::codec;
 
 impl Client {
     pub async fn new(
-        connect: Connect, broker: MqttBroker,
+        connect: mqtt_proto::packet::ConnectPacket, broker: MqttBroker,
     ) -> MQTTResult<(
         Client,
         ClientId,
@@ -18,7 +23,9 @@ impl Client {
         MessageProducer,
         UnboundedReceiverStream<Command>,
     )> {
-        let client_id = connect.client_id.ok_or_else(|| MQTTError::ClientError("missing clientId".to_string()))?;
+        let client_id = ClientId::from(connect.client_identifier());
+        // let will = connect.will().map(|msg| Message::new(0, msg.0.to_string(), 0, bytes::Bytes::from(msg.1)));
+        let will = connect.will().map(|msg| Message::new(0, msg.0.to_string(), 0, Bytes::new()));
 
         //Create channels
         let (tx, rx) = sync::mpsc::unbounded_channel();
@@ -40,68 +47,60 @@ impl Client {
             controller,
         };
 
-        Ok((
-            client,
-            client_id,
-            connect.will.map(|msg| msg.into()),
-            consumer,
-            producer,
-            UnboundedReceiverStream::new(commands),
-        ))
+        Ok((client, client_id, will, consumer, producer, UnboundedReceiverStream::new(commands)))
     }
 
-    pub async fn process(self: &Self, packet: Packet) -> MQTTResult<Option<Ack>> {
+    pub async fn process(self: &Self, packet: VariablePacket) -> MQTTResult<Option<Ack>> {
         let broker = &self.broker;
         let client_id = self.id.clone();
 
-        match &packet.packet_type {
-            PacketType::SUBSCRIBE => {
-                let subscribe: Subscribe = packet.try_into()?;
-                let topics = subscribe.topics;
-                let packet_id = subscribe.packet_id;
+        match packet {
+            VariablePacket::SubscribePacket(subscribe) => {
+                let topics: Vec<(Topic, Qos)> = subscribe.subscribes().iter().map(|(tf, qos)| (tf.to_string(), *qos as u8)).collect();
+                let packet_id = subscribe.packet_identifier();
 
                 let result = broker.lock().await.subscribe(&client_id, topics);
                 return result.map(|sub_results| Some(Ack::Subscribe(packet_id, sub_results)));
             }
-            PacketType::UNSUBSCRIBE => {
-                let unsubscribe: Unsubscribe = packet.try_into()?;
-                let packet_id = unsubscribe.packet_id;
+            VariablePacket::UnsubscribePacket(unsubscribe) => {
+                let packet_id = unsubscribe.packet_identifier();
+                let topics: Vec<Topic> = unsubscribe.subscribes().iter().map(|tf| tf.to_string()).collect();
 
-                let result = broker.lock().await.unsubscribe(&self.id, unsubscribe.topics);
+                let result = broker.lock().await.unsubscribe(&self.id, topics);
                 return result.map(|_| Some(Ack::Unsubscribe(packet_id)));
             }
-            PacketType::PUBLISH => {
-                let publish: Publish = packet.try_into()?;
-                let packet_id = publish.packet_id;
-                let qos = publish.qos;
+            VariablePacket::PublishPacket(publish) => {
+                let (qos, packet_id) = publish.qos().split();
+
+                let topic_name = publish.topic_name();
+                let bytes = Bytes::copy_from_slice(publish.payload());
 
                 {
                     let mut broker = broker.lock().await;
-                    broker.validate(&publish.topic)?;
-                    broker.publish(publish.topic, publish.qos, publish.payload)?;
+                    broker.validate(&topic_name)?;
+                    broker.publish(topic_name.to_string(), qos as u8, bytes)?;
                 }
 
                 //responses should be made in order of receiving
-                if qos == 1 {
-                    return Ok(Some(Ack::Publish(packet_id)));
-                } else if qos == 2 {
+                if qos == QualityOfService::Level1 {
+                    return Ok(Some(Ack::Publish(packet_id.unwrap())));
+                } else if qos == QualityOfService::Level2 {
                     //FIXME
                     //let response: Packet = PubAck { packet_id: publish.packet_id }.into();
                     //self.packets.send(response).await?;
                 }
             }
-            PacketType::PUBACK => {
-                let puback: PubAck = packet.try_into()?;
-                broker.lock().await.acknowledge(puback.packet_id)?;
+            VariablePacket::PubackPacket(puback) => {
+                broker.lock().await.acknowledge(puback.packet_identifier() as u16)?;
             }
-            PacketType::PINGREQ => {
+            VariablePacket::PingreqPacket(_) => {
                 //FIXME implement connection timeout
                 return Ok(Some(Ack::Ping));
             }
-            PacketType::CONNECT => {
+            VariablePacket::ConnectPacket(_) => {
                 error!("disconnecting client (duplicated CONNECT)");
             }
-            PacketType::DISCONNECT => {
+            VariablePacket::DisconnectPacket(_) => {
                 broker.lock().await.disconnect_cleanly(&client_id);
                 if self.controller.send(Command::DISCONNECT).is_err() {
                     panic!("unable to properly disconnect client");
@@ -134,23 +133,31 @@ impl Publisher for MessageConsumer {
             error!("Publishing to already closed client {:?}", self.client_id);
             return Err(MQTTError::ClosedClient(self.client_id.clone()));
         }
-
+        let name = TopicName::new(message.topic).unwrap();
+        let message = PublishPacket::new(
+            name,
+            QoSWithPacketIdentifier::new(QualityOfService::Level1, message.id as u16),
+            message.payload.to_vec(),
+        );
         self.tx.send(message.into()).map_err(|e| MQTTError::ServerError(e.to_string()))
     }
 
     fn ack(&self, ack: Ack) -> Result<(), MQTTError> {
-        let packet = match ack {
-            Ack::Connect => ConnAck::default().into(),
-            Ack::Publish(packet_id) => PubAck::new(packet_id).into(),
-            Ack::Subscribe(packet_id, sub_results) => SubAck::new(packet_id, sub_results).into(),
-            Ack::Unsubscribe(packet_id) => UnsubAck::new(packet_id).into(),
-            Ack::Ping => PingResp::default().into(),
+        let packet: VariablePacket = match ack {
+            Ack::Connect => ConnackPacket::new(false, ConnectReturnCode::ConnectionAccepted).into(),
+            Ack::Publish(packet_id) => PubackPacket::new(packet_id).into(),
+            Ack::Subscribe(packet_id, sub_results) => {
+                //FIXME: fix subqos
+                SubackPacket::new(packet_id, sub_results.iter().map(|sub_qos| SubscribeReturnCode::MaximumQoSLevel2).collect()).into()
+            }
+            Ack::Unsubscribe(packet_id) => UnsubackPacket::new(packet_id).into(),
+            Ack::Ping => PingrespPacket::new().into(),
         };
         self.tx.send(packet).map_err(|e| MQTTError::ServerError(e.to_string()))
     }
 
     fn disconnect(&self) {
-        if self.tx.send(Disconnect::default().into()).is_err() {
+        if self.tx.send(DisconnectPacket::new().into()).is_err() {
             error!("failed to send DISCONNECT")
         }
     }
@@ -170,14 +177,14 @@ impl MessageProducer {
     pub async fn forward_to<W>(mut self, write: W, commands: mpsc::UnboundedSender<Command>)
     where
         W: AsyncWrite + Unpin,
-        FramedWrite<W, PacketsCodec>: Sink<Packet>,
-        <FramedWrite<W, PacketsCodec> as Sink<Packet>>::Error: fmt::Display,
+        FramedWrite<W, MqttCodec>: Sink<VariablePacket>,
+        <FramedWrite<W, MqttCodec> as Sink<VariablePacket>>::Error: fmt::Display,
     {
-        let mut packets = FramedWrite::new(write, PacketsCodec::new());
+        let decoder = mqtt_proto::packet::MqttCodec::new();
+        let mut packets = codec::FramedWrite::new(write, decoder);
 
         while let Some(packet) = self.rx.recv().await {
-            if packet.packet_type == PacketType::DISCONNECT {
-                //Do not forward. Just close the connection.
+            if let VariablePacket::DisconnectPacket(_) = packet {
                 debug!("closing the connection");
                 self.send_disconnect_cmd(commands);
                 return;
@@ -185,7 +192,7 @@ impl MessageProducer {
 
             match packets.send(packet).await {
                 Ok(_) => {
-                    debug!("sending packet to client {:?}", self.client_id)
+                    debug!("sent packet to client {:?}", self.client_id)
                 }
                 Err(error) => {
                     error!(reason = % error, "error sending to client");
