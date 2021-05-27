@@ -97,7 +97,7 @@ impl<T: Publisher + Clone> Broker<T> {
         let id = self
             .packet_counter
             .entry(topic.clone())
-            .or_insert_with(|| std::sync::atomic::AtomicU64::new(0))
+            .or_insert_with(|| std::sync::atomic::AtomicU64::new(1))
             .fetch_add(1, SeqCst);
 
         let message = Message::new(id, topic, qos, payload);
@@ -220,9 +220,10 @@ mod tests {
     use futures::executor::block_on;
     use tokio::sync::mpsc;
 
-    use mqtt::{Connect, MessageConsumer, Rx};
+    use mqtt::{MessageConsumer, Rx};
 
     use super::*;
+    use mqttrs::{Connect, Protocol};
 
     #[test]
     fn test_broker_connect() {
@@ -361,16 +362,18 @@ mod tests {
 
     fn register_client(broker: &mut Broker<MessageConsumer>, client_id: &str) -> Rx {
         let connect = Connect {
-            version: 3,
-            client_id: Some(client_id.clone().to_string()),
-            auth: None,
-            will: None,
+            protocol: Protocol::MQTT311,
+            client_id: client_id.to_string(),
             clean_session: false,
+            last_will: Option::None,
+            username: Option::None,
+            keep_alive: 0,
+            password: Option::None,
         };
 
         let (tx, rx) = mpsc::unbounded_channel();
         let message_consumer = MessageConsumer::new(client_id.clone().to_string(), tx);
-        let result = broker.register(&connect.client_id.unwrap(), message_consumer, None);
+        let result = broker.register(&connect.client_id, message_consumer, None);
 
         assert!(result.is_ok());
 

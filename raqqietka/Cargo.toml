@@ -5,8 +5,7 @@ authors = ["Blazej Bucko <blazej.bucko@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-mqtt_proto = {package = "mqtt-protocol", version = "0.11", features = ["tokio-codec"] }
-mqtt-codec = "0.3"
+mqttrs = { git = "https://github.com/bbucko/mqttrs", branch = "0.3.1" }
 
 tokio = {version = "1.6", features = ["sync", "macros", "io-util", "rt", "rt-multi-thread", "net"]}
 tokio-util = {version = "0.6", features = ["codec"]}

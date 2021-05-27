@@ -5,12 +5,13 @@ authors = ["Blazej Bucko <blazej.bucko@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-core = {path = "../core"}
-tracing = {version = "0.1", features = ["std"], default-features = false}
+core = { path = "../core" }
+tracing = { version = "0.1", features = ["std"], default-features = false }
 bytes = "1"
 
 [dev-dependencies]
-mqtt = {path = "../mqtt"}
-futures = {version = "0.3", features = ["executor"]}
-tokio = {version = "1.6", features = ["sync"]}
-tokio-util = {version = "0.6", features = ["codec"]}
+mqtt = { path = "../mqtt" }
+mqttrs = { git = "https://github.com/bbucko/mqttrs", branch = "0.3.1" }
+futures = { version = "0.3", features = ["executor"] }
+tokio = { version = "1.6", features = ["sync"] }
+tokio-util = { version = "0.6", features = ["codec"] }

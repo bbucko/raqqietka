@@ -7,24 +7,27 @@ use bytes::Bytes;
 use core::*;
 use futures::prelude::*;
 use futures::SinkExt;
-use mqtt_proto::packet::VariablePacket;
 use tokio::io::AsyncWrite;
 use tokio::sync;
 use tokio_util::codec::FramedWrite;
 use tracing::*;
 
 mod client;
+mod codec;
 
 pub type MqttBroker = Arc<sync::Mutex<Broker<MessageConsumer>>>;
 
-pub type Tx = sync::mpsc::UnboundedSender<VariablePacket>;
-pub type Rx = sync::mpsc::UnboundedReceiver<VariablePacket>;
+pub type Tx = sync::mpsc::UnboundedSender<mqttrs::Packet>;
+pub type Rx = sync::mpsc::UnboundedReceiver<mqttrs::Packet>;
 pub type ControllerTx = sync::mpsc::UnboundedSender<Command>;
 
 pub enum Command {
-    PACKET(VariablePacket),
+    PACKET(mqttrs::Packet),
     DISCONNECT,
 }
+
+#[derive(Default)]
+pub struct PacketsCodec {}
 
 #[derive(Debug)]
 pub struct Client {

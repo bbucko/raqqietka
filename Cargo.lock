@@ -3,30 +3,6 @@
 version = 3
 
 [[package]]
-name = "actix-codec"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09e55f0a5c2ca15795035d90c46bd0e73a5123b72f68f12596d6ba5282051380"
-dependencies = [
- "bitflags",
- "bytes 0.5.6",
- "futures-core",
- "futures-sink",
- "log",
- "tokio 0.2.25",
- "tokio-util 0.2.0",
-]
-
-[[package]]
-name = "aho-corasick"
-version = "0.7.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e37cfd5e7657ada45f742d6e99ca5788580b5c529dc78faf11ece6dc702656f"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "ansi_term"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -42,21 +18,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
-name = "bitflags"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
-
-[[package]]
 name = "broker"
 version = "0.1.0"
 dependencies = [
- "bytes 1.0.1",
+ "bytes",
  "core",
  "futures",
  "mqtt",
- "tokio 1.6.0",
- "tokio-util 0.6.7",
+ "mqttrs",
+ "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -68,24 +39,9 @@ checksum = "14c189c53d098945499cdfa7ecc63567cf3886b3332b312a5b4585d8d3a6a610"
 
 [[package]]
 name = "bytes"
-version = "0.5.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e4cec68f03f32e44924783795810fa50a7035d8c8ebe78580ad7e6c703fba38"
-
-[[package]]
-name = "bytes"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b700ce4376041dcd0a327fd0097c41095743c4c8af8887265942faf1100bd040"
-
-[[package]]
-name = "bytestring"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc7c05fa5172da78a62d9949d662d2ac89d4cc7355d7b49adee5163f1fb3f363"
-dependencies = [
- "bytes 0.5.6",
-]
 
 [[package]]
 name = "cfg-if"
@@ -109,7 +65,7 @@ dependencies = [
 name = "core"
 version = "0.1.0"
 dependencies = [
- "bytes 1.0.1",
+ "bytes",
  "tracing",
 ]
 
@@ -211,7 +167,7 @@ dependencies = [
  "futures-sink",
  "futures-task",
  "memchr",
- "pin-project-lite 0.2.6",
+ "pin-project-lite",
  "pin-utils",
  "proc-macro-hack",
  "proc-macro-nested",
@@ -290,54 +246,25 @@ name = "mqtt"
 version = "0.1.0"
 dependencies = [
  "broker",
- "bytes 1.0.1",
+ "bytes",
  "core",
  "enum-primitive-derive",
  "futures",
- "mqtt-protocol",
- "mqttbytes",
+ "mqttrs",
  "num-traits 0.2.14",
- "tokio 1.6.0",
+ "tokio",
  "tokio-stream",
- "tokio-util 0.6.7",
+ "tokio-util",
  "tracing",
 ]
 
 [[package]]
-name = "mqtt-codec"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ae683d9e953a1a5da0fc1f1c89496734667fc4b66bfaddf12e47ff39ccc9de6"
+name = "mqttrs"
+version = "0.3.1"
+source = "git+https://github.com/bbucko/mqttrs?branch=0.3.1#c3183f0167d9e094494cd0a3d9a607a098af7d66"
 dependencies = [
- "actix-codec",
- "bitflags",
- "bytes 0.5.6",
- "bytestring",
-]
-
-[[package]]
-name = "mqtt-protocol"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28e75553120607736d0a248f483fb0682e0279bb9a6f30a7c76c56a9a6ac9ade"
-dependencies = [
- "byteorder",
- "bytes 1.0.1",
- "lazy_static",
- "log",
- "regex",
- "thiserror",
- "tokio 1.6.0",
- "tokio-util 0.6.7",
-]
-
-[[package]]
-name = "mqttbytes"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11df9e74db0d738afc4db843d97d573873d4801af8f2978ab91f6539c4328ac0"
-dependencies = [
- "bytes 1.0.1",
+ "bytes",
+ "serde",
 ]
 
 [[package]]
@@ -415,12 +342,6 @@ dependencies = [
 
 [[package]]
 name = "pin-project-lite"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "257b64915a082f7811703966789728173279bdebb956b143dbcd23f6f970a777"
-
-[[package]]
-name = "pin-project-lite"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc0e1f259c92177c30a4c9d177246edd0a3568b25756a977d0632cf8fa37e905"
@@ -475,11 +396,10 @@ dependencies = [
  "core",
  "futures-util",
  "mqtt",
- "mqtt-codec",
- "mqtt-protocol",
- "tokio 1.6.0",
+ "mqttrs",
+ "tokio",
  "tokio-stream",
- "tokio-util 0.6.7",
+ "tokio-util",
  "tracing",
  "tracing-futures",
  "tracing-subscriber",
@@ -491,8 +411,6 @@ version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d07a8629359eb56f1e2fb1652bb04212c072a87ba68546a04065d525673ac461"
 dependencies = [
- "aho-corasick",
- "memchr",
  "regex-syntax",
 ]
 
@@ -511,6 +429,26 @@ name = "regex-syntax"
 version = "0.6.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f497285884f3fcff424ffc933e56d7cbca511def0c9831a7f9b5f6153e3cc89b"
+
+[[package]]
+name = "serde"
+version = "1.0.126"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec7505abeacaec74ae4778d9d9328fe5a5d04253220a85c4ee022239fc996d03"
+dependencies = [
+ "serde_derive",
+]
+
+[[package]]
+name = "serde_derive"
+version = "1.0.126"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "963a7dbc9895aeac7ac90e74f34a5d5261828f79df35cbed41e10189d3804d43"
+dependencies = [
+ "proc-macro2",
+ "quote 1.0.9",
+ "syn 1.0.72",
+]
 
 [[package]]
 name = "sharded-slab"
@@ -565,26 +503,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "thiserror"
-version = "1.0.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa6f76457f59514c7eeb4e59d891395fab0b2fd1d40723ae737d64153392e9c6"
-dependencies = [
- "thiserror-impl",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a36768c0fbf1bb15eca10defa29526bda730a2376c2ab4393ccfa16fb1a318d"
-dependencies = [
- "proc-macro2",
- "quote 1.0.9",
- "syn 1.0.72",
-]
-
-[[package]]
 name = "thread_local"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -595,27 +513,17 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "0.2.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6703a273949a90131b290be1fe7b039d0fc884aa1935860dfcbe056f28cd8092"
-dependencies = [
- "bytes 0.5.6",
- "pin-project-lite 0.1.12",
-]
-
-[[package]]
-name = "tokio"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd3076b5c8cc18138b8f8814895c11eb4de37114a5d127bafdc5e55798ceef37"
 dependencies = [
  "autocfg",
- "bytes 1.0.1",
+ "bytes",
  "libc",
  "memchr",
  "mio",
  "num_cpus",
- "pin-project-lite 0.2.6",
+ "pin-project-lite",
  "tokio-macros",
 ]
 
@@ -637,22 +545,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8864d706fdb3cc0843a49647ac892720dac98a6eeb818b77190592cf4994066"
 dependencies = [
  "futures-core",
- "pin-project-lite 0.2.6",
- "tokio 1.6.0",
-]
-
-[[package]]
-name = "tokio-util"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "571da51182ec208780505a32528fc5512a8fe1443ab960b3f2f3ef093cd16930"
-dependencies = [
- "bytes 0.5.6",
- "futures-core",
- "futures-sink",
- "log",
- "pin-project-lite 0.1.12",
- "tokio 0.2.25",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]
@@ -661,12 +555,12 @@ version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1caa0b0c8d94a049db56b5acf8cba99dc0623aab1b26d5b5f5e2d945846b3592"
 dependencies = [
- "bytes 1.0.1",
+ "bytes",
  "futures-core",
  "futures-sink",
  "log",
- "pin-project-lite 0.2.6",
- "tokio 1.6.0",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]
@@ -676,7 +570,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09adeb8c97449311ccd28a427f96fb563e7fd31aabf994189879d9da2394b89d"
 dependencies = [
  "cfg-if",
- "pin-project-lite 0.2.6",
+ "pin-project-lite",
  "tracing-core",
 ]
 

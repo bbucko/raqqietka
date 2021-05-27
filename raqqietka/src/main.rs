@@ -14,7 +14,6 @@ use broker::*;
 use core::*;
 use futures_util::TryStreamExt;
 use mqtt::*;
-use mqtt_proto::packet::VariablePacket;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 #[tokio::main]
@@ -46,12 +45,12 @@ async fn process(broker: MqttBroker, socket: net::TcpStream) -> Result<(), core:
 
     let (read, write) = io::split(socket);
 
-    let decoder = mqtt_proto::packet::MqttCodec::new();
+    let decoder = mqtt::PacketsCodec::new();
 
     let mut packets = codec::FramedRead::new(read, decoder);
 
     let connect = packets.next().await.unwrap().map_err(|err| MQTTError::ClientError(err.to_string()))?;
-    if let VariablePacket::ConnectPacket(connect) = connect {
+    if let mqttrs::Packet::Connect(connect) = connect {
         let (client, client_id, will, msg_in, msg_out, commands) = Client::new(connect, broker.clone()).await?;
 
         let span = info_span!("mqtt", %client_id);
