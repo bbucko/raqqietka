@@ -13,5 +13,5 @@ bytes = "1"
 mqtt = { path = "../mqtt" }
 mqttrs = { git = "https://github.com/bbucko/mqttrs", branch = "0.3.1" }
 futures = { version = "0.3", features = ["executor"] }
-tokio = { version = "1.6", features = ["sync"] }
+tokio = { version = "1.18", features = ["sync"] }
 tokio-util = { version = "0.6", features = ["codec"] }
