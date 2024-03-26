@@ -13,7 +13,7 @@ tracing = { version = "0.1", features = ["std"], default-features = false }
 num-traits = "0.2"
 enum-primitive-derive = "0.1"
 
-tokio = { version = "1.6", features = ["sync"] }
+tokio = { version = "1.18", features = ["sync"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.6", features = ["codec"] }
 
